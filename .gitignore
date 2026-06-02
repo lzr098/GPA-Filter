@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.vcf
+*.vcf.gz
+*.bcf
+*.bed.gz.tbi
+*.vcf.gz.tbi
+*.vcf.gz.csi

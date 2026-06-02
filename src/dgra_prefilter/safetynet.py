@@ -1,0 +1,131 @@
+"""Safety net providers for dgra-prefilter."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from pathlib import Path
+
+
+class SafetyNetProvider(ABC):
+    """Abstract base class for safety net providers.
+
+    A safety net ensures that known pathogenic variants are never filtered out,
+    even if they fall outside the retained genomic regions.
+
+    v1.0 implements ClinVar only; v2.0 will add OMIM.
+    """
+
+    @abstractmethod
+    def get_bed_path(self, ref_dir: Path) -> Path:
+        """Return the path to the pathogenic variants BED file.
+
+        Args:
+            ref_dir: Directory containing reference BED files.
+
+        Returns:
+            Path to the safety net BED file.
+        """
+        ...
+
+    @abstractmethod
+    def get_tag(self) -> str:
+        """Return the DGRA_SAFETYNET INFO tag value.
+
+        Returns:
+            Tag string (e.g., 'ClinVar', 'OMIM').
+        """
+        ...
+
+    @abstractmethod
+    def is_available(self, ref_dir: Path) -> bool:
+        """Check whether safety net data is available.
+
+        A safety net is available when its BED file exists and is non-empty.
+
+        Args:
+            ref_dir: Directory containing reference BED files.
+
+        Returns:
+            True if the data file exists and contains data.
+        """
+        ...
+
+
+class ClinVarSafetyNet(SafetyNetProvider):
+    """ClinVar Pathogenic/Likely_pathogenic variants safety net.
+
+    Extracts variant coordinates from ClinVar where CLNSIG contains
+    'Pathogenic' or 'Likely_pathogenic' (including combined states
+    like 'Pathogenic/Likely_pathogenic').
+    """
+
+    BED_FILENAME = "clinvar_pathogenic_GRCh38.bed"
+
+    def get_bed_path(self, ref_dir: Path) -> Path:
+        """Return the ClinVar pathogenic variants BED file path.
+
+        Args:
+            ref_dir: Directory containing reference BED files.
+
+        Returns:
+            Path to clinvar_pathogenic_GRCh38.bed.
+        """
+        return ref_dir / self.BED_FILENAME
+
+    def get_tag(self) -> str:
+        """Return 'ClinVar' as the safety net tag.
+
+        Returns:
+            The string 'ClinVar'.
+        """
+        return "ClinVar"
+
+    def is_available(self, ref_dir: Path) -> bool:
+        """Check whether ClinVar safety net data is available.
+
+        Args:
+            ref_dir: Directory containing reference BED files.
+
+        Returns:
+            True if clinvar_pathogenic_GRCh38.bed exists and is non-empty.
+        """
+        path = self.get_bed_path(ref_dir)
+        if not path.exists():
+            return False
+        # Check that the file has data beyond a possible header line
+        try:
+            with open(path, "r") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("track") and not stripped.startswith("#"):
+                        return True
+            return False
+        except OSError:
+            return False
+
+
+# v2.0 implementation placeholder:
+# class OMIMSafetyNet(SafetyNetProvider):
+#     """OMIM pathogenic variants safety net (v2.0)."""
+#
+#     BED_FILENAME = "omim_pathogenic_GRCh38.bed"
+#
+#     def get_bed_path(self, ref_dir: Path) -> Path:
+#         return ref_dir / self.BED_FILENAME
+#
+#     def get_tag(self) -> str:
+#         return "OMIM"
+#
+#     def is_available(self, ref_dir: Path) -> bool:
+#         path = self.get_bed_path(ref_dir)
+#         if not path.exists():
+#             return False
+#         try:
+#             with open(path, "r") as f:
+#                 for line in f:
+#                     stripped = line.strip()
+#                     if stripped and not stripped.startswith("track") and not stripped.startswith("#"):
+#                         return True
+#             return False
+#         except OSError:
+#             return False
