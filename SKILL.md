@@ -1,20 +1,32 @@
-# dgra-prefilter
+---
+name: dgra-prefilter
+description: |
+  全基因组 VCF 基因组区域预过滤模块（GPA Filter）v1.0.0。基于 GENCODE 基因座、ncRNA 区域、ENCODE 调控元件和 ClinVar 致病变异安全网，对 GRCh38 VCF 进行硬过滤。零外部 Python 运行时依赖，核心过滤委托 bcftools。三种预设（comprehensive/coding-only/regulatory-minimal），支持 CLI 和 Python API。
 
-## Description
-全基因组 VCF 基因组区域预过滤模块。基于 GENCODE 基因座、ncRNA 区域、ENCODE 调控元件和 ClinVar 致病变异安全网，对 GRCh38 VCF 进行硬过滤。过滤后仅保留具有生物学功能意义的区域变异和已知致病位点，大幅减少下游分析的计算负担。
+  **当以下情况时使用此 Skill**：
+  (1) 用户提到"VCF 预过滤"、"基因组区域过滤"、"变异筛选"
+  (2) 全基因组 VCF 文件过大需要精简后再做致病性分析
+  (3) 需要仅保留基因区/ncRNA/调控元件/ClinVar 致病位点
+  (4) 需要更新预过滤参考数据（GENCODE/ENCODE/ClinVar）
+  (5) 任何涉及"prefilter"、"基因组预过滤"、"过滤VCF"的场景
+
+  **需要系统安装 bcftools >= 1.17。**
+---
+
+# dgra-prefilter: Genomic Region Prefilter
+
+## 概述
+
+输入单样本 GRCh38 VCF/VCF.gz，基于预构建的保留区域 BED 文件（GENCODE 全转录本基因座、ncRNA 基因座、ENCODE 实验验证调控元件），以及 ClinVar 已知致病位点安全网，输出精简后的 VCF 和过滤统计报告。
 
 ## Trigger
+
 当用户提到以下关键词时触发：
-- VCF 预过滤
-- 基因组区域过滤
-- 变异筛选
-- prefilter
-- 基因组预过滤
-- 过滤 VCF
-- 保留致病位点
-- ClinVar 安全网
-- 编码区过滤
-- 调控元件过滤
+- VCF 预过滤 / 基因组区域过滤 / 变异筛选
+- prefilter / 基因组预过滤 / 过滤 VCF
+- 保留致病位点 / ClinVar 安全网
+- 编码区过滤 / 调控元件过滤
+- GPA Filter
 
 ## Parameters
 
@@ -54,6 +66,14 @@
 - 报告文件：{report_path}
 ```
 
+## Installation
+
+```bash
+pip install dgra-prefilter
+```
+
+Requires: Python >= 3.9, bcftools >= 1.17
+
 ## Example
 
 用户：「帮我过滤这个 VCF，只保留基因区和 ClinVar 致病变异」
@@ -67,3 +87,19 @@
 
 用户：「帮我更新参考数据」
 → dgra-prefilter --update-refs
+
+## Python API
+
+```python
+from dgra_prefilter import prefilter_vcf
+
+result = prefilter_vcf(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    preset="comprehensive",
+)
+```
+
+## GitHub
+
+https://github.com/lzr098/GPA-Filter
