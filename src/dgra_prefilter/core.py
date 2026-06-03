@@ -267,6 +267,7 @@ class FilterEngine:
                 # Copy combined VCF directly to output
                 import shutil
 
+                self.config.output_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(combined_vcf, self.config.output_path)
                 # Try to copy index if it exists
                 idx_src = combined_vcf.with_suffix(combined_vcf.suffix + ".csi")
