@@ -55,7 +55,7 @@ FANTOM5_URL = (
 VISTA_URL = "https://enhancer.lbl.gov/cgi-bin/imagedb3.pl?form=download"
 CLINVAR_VCF_URL = (
     "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/"
-    "clinvar_20250530.vcf.gz"
+    "clinvar_20260530.vcf.gz"
 )
 
 # GENCODE biotype categories
@@ -675,7 +675,13 @@ def main() -> None:
             encode_path = None
 
         if encode_path and encode_path.exists():
-            build_encode_beds(encode_path, output_dir)
+            try:
+                build_encode_beds(encode_path, output_dir)
+            except (OSError, gzip.BadGzipFile, ValueError) as exc:
+                logger.warning("ENCODE SCREEN data invalid (%s), creating empty BED files", exc)
+                for bed_name in [ENCODE_CCRE_BED, ENCODE_PLS_PELS_BED]:
+                    (output_dir / bed_name).touch()
+                    write_version_file(output_dir, bed_name, "missing")
         else:
             logger.warning("ENCODE SCREEN not available, creating empty BED files")
             for bed_name in [ENCODE_CCRE_BED, ENCODE_PLS_PELS_BED]:
