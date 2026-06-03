@@ -309,11 +309,14 @@ def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
             if line.startswith("#"):
                 continue
             if not header_skipped:
+                # Heuristic: skip header only if it doesn't look like a chrom line
+                if not line.startswith("chr"):
+                    header_skipped = True
+                    continue
                 header_skipped = True
-                continue  # Skip header line
 
             parts = line.rstrip("\n").split("\t")
-            if len(parts) < 4:
+            if len(parts) < 6:
                 continue
 
             chrom_raw = parts[0]
@@ -322,7 +325,10 @@ def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
                 end = int(parts[2])
             except ValueError:
                 continue
-            ccre_type = parts[3] if len(parts) > 3 else ""
+
+            # cCRE type is in the 6th column, format "type,CTCF-state" or just "type"
+            type_field = parts[5] if len(parts) > 5 else ""
+            ccre_type = type_field.split(",")[0].strip()
 
             chrom = BedUtils.normalize_chrom(chrom_raw)
 
@@ -331,7 +337,7 @@ def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
                 ccre_intervals[chrom] = []
             ccre_intervals[chrom].append((start, end))
 
-            # PLS/pELS only (per U2 decision: filter by 4th column cCRE type)
+            # PLS/pELS only (per U2 decision: filter by cCRE type)
             if ccre_type in ("PLS", "pELS"):
                 if chrom not in pls_pels_intervals:
                     pls_pels_intervals[chrom] = []
