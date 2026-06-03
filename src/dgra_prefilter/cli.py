@@ -74,6 +74,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Update reference data before filtering",
     )
     parser.add_argument(
+        "--annotate",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable VCF INFO annotation with DGRA_REGION and DGRA_SAFETYNET tags "
+            "(slower; default: off)"
+        ),
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         default=False,
@@ -106,6 +115,7 @@ def _args_to_config(args: argparse.Namespace) -> dict:
         "report_path": args.report,
         "force": args.force,
         "update_refs": args.update_refs,
+        "annotate": args.annotate,
     }
 
 

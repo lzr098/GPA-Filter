@@ -79,6 +79,7 @@ class PrefilterConfig:
     report_path: Path | None = None
     force: bool = False
     update_refs: bool = False
+    annotate: bool = False
 
     def __post_init__(self) -> None:
         """Normalize paths after initialization."""
@@ -129,13 +130,19 @@ class FilterResult:
 class FilterEngine:
     """Core filtering engine that orchestrates the complete pipeline.
 
-    Pipeline stages:
-    1. Input validation (VCF format, genome version, bcftools availability)
-    2. Reference file validation and BED merging
-    3. Coordinate-based hard filtering via bcftools
-    4. Safety net extraction and merging
-    5. VCF INFO annotation
-    6. Report generation
+    Pipeline stages (fixed two-phase):
+
+    Phase 1 – Coordinate filtering (always runs)
+        1. Input validation (VCF format, genome version, bcftools)
+        2. Reference loading and BED merging (gene + ncRNA + cCRE)
+        3. Coordinate-based hard filtering via bcftools view -T
+        4. Safety net extraction (ClinVar P/LP) and merge/dedup
+
+    Phase 2 – INFO annotation (optional, --annotate)
+        5. VCF INFO annotation with DGRA_REGION / DGRA_SAFETYNET tags
+
+    Phase 3 – Reporting (always runs)
+        6. JSON report generation
     """
 
     MIN_BCFTOOLS_VERSION = "1.17"
@@ -171,11 +178,15 @@ class FilterEngine:
             self._temp_dir = tempfile.TemporaryDirectory(prefix="dgra_prefilter_")
             temp_path = Path(self._temp_dir.name)
 
+            # =====================================================================
             # Stage 1: Input validation
+            # =====================================================================
             logger.info("Stage 1/6: Input validation")
             self._validate_input()
 
+            # =====================================================================
             # Stage 2: Reference loading
+            # =====================================================================
             logger.info("Stage 2/6: Reference loading and BED merging")
             self.ref_manager.validate_refs(self.preset)
             merged_bed = temp_path / "merged_regions.bed"
@@ -184,14 +195,18 @@ class FilterEngine:
             # Count input variants
             self.stats.input_variants = self._count_variants(self.config.input_path)
 
-            # Stage 3: Coordinate hard filtering
+            # =====================================================================
+            # Stage 3: Coordinate hard filtering (gene + ncRNA + cCRE)
+            # =====================================================================
             logger.info("Stage 3/6: Coordinate-based filtering")
             region_vcf = temp_path / "region_filtered.vcf.gz"
             self._filter_by_regions(self.config.input_path, merged_bed, region_vcf)
             region_count = self._count_variants(region_vcf)
             logger.info("Region-filtered variants: %d", region_count)
 
+            # =====================================================================
             # Stage 4: Safety net extraction and merging
+            # =====================================================================
             logger.info("Stage 4/6: Safety net extraction and merging")
             safetynet_vcfs: list[Path] = []
             for provider in self.preset.get_safetynet_providers():
@@ -223,23 +238,51 @@ class FilterEngine:
             self.stats.retained_variants = self._count_variants(combined_vcf)
             logger.info("Total retained variants: %d", self.stats.retained_variants)
 
-            # Stage 5: VCF INFO annotation
-            logger.info("Stage 5/6: VCF INFO annotation")
-            from dgra_prefilter.annotate import VCFAnnotator
+            # =====================================================================
+            # Stage 5: VCF INFO annotation (optional)
+            # =====================================================================
+            if self.config.annotate:
+                logger.info("Stage 5/6: VCF INFO annotation (enabled)")
+                from dgra_prefilter.annotate import VCFAnnotator
 
-            annotator = VCFAnnotator()
-            annotator.load_beds(self.preset, self.config.ref_dir)
-            annotation_stats = annotator.annotate_vcf(combined_vcf, self.config.output_path)
+                annotator = VCFAnnotator()
+                annotator.load_beds(self.preset, self.config.ref_dir)
+                annotation_stats = annotator.annotate_vcf(
+                    combined_vcf, self.config.output_path
+                )
 
-            # Merge annotation stats into main stats
-            self.stats.region_counts = annotation_stats.region_counts
-            self.stats.clinvar_count = annotation_stats.clinvar_count
-            self.stats.omim_count = annotation_stats.omim_count
-            self.stats.region_only_variants = annotation_stats.region_only_variants
-            self.stats.safetynet_only_variants = annotation_stats.safetynet_only_variants
-            self.stats.region_and_safetynet_variants = (
-                annotation_stats.region_and_safetynet_variants
-            )
+                # Merge annotation stats into main stats
+                self.stats.region_counts = annotation_stats.region_counts
+                self.stats.clinvar_count = annotation_stats.clinvar_count
+                self.stats.omim_count = annotation_stats.omim_count
+                self.stats.region_only_variants = annotation_stats.region_only_variants
+                self.stats.safetynet_only_variants = (
+                    annotation_stats.safetynet_only_variants
+                )
+                self.stats.region_and_safetynet_variants = (
+                    annotation_stats.region_and_safetynet_variants
+                )
+            else:
+                logger.info("Stage 5/6: VCF INFO annotation (skipped)")
+                # Copy combined VCF directly to output
+                import shutil
+
+                shutil.copy2(combined_vcf, self.config.output_path)
+                # Try to copy index if it exists
+                idx_src = combined_vcf.with_suffix(combined_vcf.suffix + ".csi")
+                if idx_src.exists():
+                    shutil.copy2(idx_src, self.config.output_path.with_suffix(
+                        self.config.output_path.suffix + ".csi"
+                    ))
+                # Set minimal stats for non-annotated runs
+                self.stats.region_only_variants = region_count
+                self.stats.safetynet_only_variants = (
+                    self.stats.retained_variants - region_count
+                )
+                self.stats.region_and_safetynet_variants = 0
+                self.stats.region_counts = {"gene": 0, "ncrna": 0, "regulatory": 0}
+                self.stats.clinvar_count = 0
+                self.stats.omim_count = 0
 
             # Populate stats before report generation
             self.stats.elapsed_seconds = time.time() - start_time
@@ -258,7 +301,9 @@ class FilterEngine:
                 "safetynet_omim": str(self.preset.safetynet_omim),
             }
 
+            # =====================================================================
             # Stage 6: Report generation
+            # =====================================================================
             logger.info("Stage 6/6: Report generation")
             report_path = self.config.report_path
             if report_path is None:
@@ -448,6 +493,9 @@ class FilterEngine:
         Uses bcftools concat -a to concatenate, bcftools sort to order,
         and bcftools norm -d snps to deduplicate.
 
+        Uses intermediate temp files instead of shell pipelines for
+        reliability (bcftools sort does not stream correctly to stdout).
+
         Args:
             region_vcf: Path to region-filtered VCF.
             safetynet_vcfs: List of safety net VCF paths.
@@ -456,61 +504,25 @@ class FilterEngine:
         Returns:
             Path to the merged VCF.
         """
-        # Build concat input list
         all_vcfs = [region_vcf] + safetynet_vcfs
 
-        # We need to pipe: concat | sort | norm
-        concat_args = ["bcftools", "concat", "-a"] + [str(v) for v in all_vcfs]
-        sort_args = ["bcftools", "sort"]
-        norm_args = [
-            "bcftools", "norm",
-            "-d", "snps",
-            "-Oz",
-            "-o", str(output),
-        ]
+        # Ensure all inputs are indexed (bcftools concat requires indices)
+        for vcf in all_vcfs:
+            self._run_bcftools(["bcftools", "index", str(vcf)])
 
-        logger.debug("Merge command: %s | %s | %s",
-                      " ".join(concat_args),
-                      " ".join(sort_args),
-                      " ".join(norm_args))
+        temp_path = Path(self._temp_dir.name) if self._temp_dir else Path(tempfile.mkdtemp())
 
-        # Run as a pipeline
-        p_concat = subprocess.Popen(
-            concat_args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        p_sort = subprocess.Popen(
-            sort_args,
-            stdin=p_concat.stdout,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        p_concat.stdout.close()  # Allow p_concat to receive SIGPIPE
+        # Step 1: concat (allow overlapping records)
+        concat_out = temp_path / "concat.vcf.gz"
+        concat_cmd = ["bcftools", "concat", "-a"] + [str(v) for v in all_vcfs] + ["-Oz", "-o", str(concat_out)]
+        self._run_bcftools(concat_cmd)
 
-        p_norm = subprocess.Popen(
-            norm_args,
-            stdin=p_sort.stdout,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        p_sort.stdout.close()  # Allow p_sort to receive SIGPIPE
+        # Step 2: sort
+        sorted_out = temp_path / "sorted.vcf.gz"
+        self._run_bcftools(["bcftools", "sort", str(concat_out), "-Oz", "-o", str(sorted_out)])
 
-        # Wait for pipeline to complete
-        _, norm_stderr = p_norm.communicate()
-        p_concat.wait()
-        p_sort.wait()
-
-        if p_norm.returncode != 0:
-            raise VCFProcessingError(
-                norm_args, p_norm.returncode, norm_stderr.decode("utf-8", errors="replace")
-            )
-        if p_concat.returncode != 0:
-            concat_stderr = p_concat.stderr.read().decode("utf-8", errors="replace")
-            raise VCFProcessingError(concat_args, p_concat.returncode, concat_stderr)
-        if p_sort.returncode != 0:
-            sort_stderr = p_sort.stderr.read().decode("utf-8", errors="replace")
-            raise VCFProcessingError(sort_args, p_sort.returncode, sort_stderr)
+        # Step 3: norm (deduplicate)
+        self._run_bcftools(["bcftools", "norm", "-d", "snps", str(sorted_out), "-Oz", "-o", str(output)])
 
         # Index the output
         self._run_bcftools(["bcftools", "index", str(output)])
@@ -582,6 +594,7 @@ def prefilter_vcf(
     report_path: str | Path | None = None,
     force: bool = False,
     update_refs: bool = False,
+    annotate: bool = False,
 ) -> FilterResult:
     """Whole-genome VCF region prefiltering main entry point.
 
@@ -598,6 +611,7 @@ def prefilter_vcf(
         report_path: JSON report output path (default: same dir as output).
         force: Skip genome version validation.
         update_refs: Trigger reference data update before filtering.
+        annotate: Enable DGRA_REGION/DGRA_SAFETYNET INFO annotation (slow).
 
     Returns:
         FilterResult containing output path and filter statistics.
@@ -618,6 +632,7 @@ def prefilter_vcf(
         report_path=Path(report_path) if report_path else None,
         force=force,
         update_refs=update_refs,
+        annotate=annotate,
     )
 
     # Handle reference data update if requested
