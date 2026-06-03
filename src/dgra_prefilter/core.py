@@ -173,6 +173,7 @@ class FilterEngine:
             VCFProcessingError: If a bcftools command fails.
         """
         start_time = time.time()
+        region_count = 0  # initialized for cases where filtering is skipped
 
         try:
             self._temp_dir = tempfile.TemporaryDirectory(prefix="dgra_prefilter_")
@@ -184,59 +185,71 @@ class FilterEngine:
             logger.info("Stage 1/6: Input validation")
             self._validate_input()
 
-            # =====================================================================
-            # Stage 2: Reference loading
-            # =====================================================================
-            logger.info("Stage 2/6: Reference loading and BED merging")
-            self.ref_manager.validate_refs(self.preset)
-            merged_bed = temp_path / "merged_regions.bed"
-            self.ref_manager.merge_preset_beds(self.preset, merged_bed)
-
-            # Count input variants
-            self.stats.input_variants = self._count_variants(self.config.input_path)
-
-            # =====================================================================
-            # Stage 3: Coordinate hard filtering (gene + ncRNA + cCRE)
-            # =====================================================================
-            logger.info("Stage 3/6: Coordinate-based filtering")
-            region_vcf = temp_path / "region_filtered.vcf.gz"
-            self._filter_by_regions(self.config.input_path, merged_bed, region_vcf)
-            region_count = self._count_variants(region_vcf)
-            logger.info("Region-filtered variants: %d", region_count)
-
-            # =====================================================================
-            # Stage 4: Safety net extraction and merging
-            # =====================================================================
-            logger.info("Stage 4/6: Safety net extraction and merging")
-            safetynet_vcfs: list[Path] = []
-            for provider in self.preset.get_safetynet_providers():
-                safetynet_bed = provider.get_bed_path(self.config.ref_dir)
-                if provider.is_available(self.config.ref_dir):
-                    sn_vcf = temp_path / f"safetynet_{provider.get_tag()}.vcf.gz"
-                    self._filter_by_safetynet(
-                        self.config.input_path, safetynet_bed, sn_vcf
-                    )
-                    sn_count = self._count_variants(sn_vcf)
-                    logger.info(
-                        "Safety net %s: %d variants", provider.get_tag(), sn_count
-                    )
-                    if sn_count > 0:
-                        safetynet_vcfs.append(sn_vcf)
-                else:
-                    logger.info(
-                        "Safety net %s: data not available, skipping",
-                        provider.get_tag(),
-                    )
-
-            # Merge region and safety net VCFs
-            if safetynet_vcfs:
-                combined_vcf = temp_path / "combined.vcf.gz"
-                self._merge_vcfs(region_vcf, safetynet_vcfs, combined_vcf)
+            # Check if input is already prefiltered/annotated
+            already_annotated = self._has_dgra_annotations()
+            if already_annotated and self.config.annotate:
+                logger.info(
+                    "Input VCF already contains DGRA annotations; "
+                    "skipping filtering stages and proceeding directly to annotation."
+                )
+                self.stats.input_variants = self._count_variants(self.config.input_path)
+                combined_vcf = self.config.input_path
+                self.stats.retained_variants = self.stats.input_variants
+                region_count = self.stats.input_variants
             else:
-                combined_vcf = region_vcf
+                # =====================================================================
+                # Stage 2: Reference loading
+                # =====================================================================
+                logger.info("Stage 2/6: Reference loading and BED merging")
+                self.ref_manager.validate_refs(self.preset)
+                merged_bed = temp_path / "merged_regions.bed"
+                self.ref_manager.merge_preset_beds(self.preset, merged_bed)
 
-            self.stats.retained_variants = self._count_variants(combined_vcf)
-            logger.info("Total retained variants: %d", self.stats.retained_variants)
+                # Count input variants
+                self.stats.input_variants = self._count_variants(self.config.input_path)
+
+                # =====================================================================
+                # Stage 3: Coordinate hard filtering (gene + ncRNA + cCRE)
+                # =====================================================================
+                logger.info("Stage 3/6: Coordinate-based filtering")
+                region_vcf = temp_path / "region_filtered.vcf.gz"
+                self._filter_by_regions(self.config.input_path, merged_bed, region_vcf)
+                region_count = self._count_variants(region_vcf)
+                logger.info("Region-filtered variants: %d", region_count)
+
+                # =====================================================================
+                # Stage 4: Safety net extraction and merging
+                # =====================================================================
+                logger.info("Stage 4/6: Safety net extraction and merging")
+                safetynet_vcfs: list[Path] = []
+                for provider in self.preset.get_safetynet_providers():
+                    safetynet_bed = provider.get_bed_path(self.config.ref_dir)
+                    if provider.is_available(self.config.ref_dir):
+                        sn_vcf = temp_path / f"safetynet_{provider.get_tag()}.vcf.gz"
+                        self._filter_by_safetynet(
+                            self.config.input_path, safetynet_bed, sn_vcf
+                        )
+                        sn_count = self._count_variants(sn_vcf)
+                        logger.info(
+                            "Safety net %s: %d variants", provider.get_tag(), sn_count
+                        )
+                        if sn_count > 0:
+                            safetynet_vcfs.append(sn_vcf)
+                    else:
+                        logger.info(
+                            "Safety net %s: data not available, skipping",
+                            provider.get_tag(),
+                        )
+
+                # Merge region and safety net VCFs
+                if safetynet_vcfs:
+                    combined_vcf = temp_path / "combined.vcf.gz"
+                    self._merge_vcfs(region_vcf, safetynet_vcfs, combined_vcf)
+                else:
+                    combined_vcf = region_vcf
+
+                self.stats.retained_variants = self._count_variants(combined_vcf)
+                logger.info("Total retained variants: %d", self.stats.retained_variants)
 
             # =====================================================================
             # Stage 5: VCF INFO annotation (optional)
@@ -369,6 +382,31 @@ class FilterEngine:
         # Check genome version in VCF header
         if not self.config.force:
             self._check_genome_version()
+
+    def _has_dgra_annotations(self) -> bool:
+        """Check if input VCF already contains DGRA_REGION or DGRA_SAFETYNET tags.
+
+        Used to detect whether the input is already a prefiltered/annotated VCF,
+        allowing the engine to skip redundant filtering when annotate=True.
+
+        Returns:
+            True if DGRA annotations are present in the header or records.
+        """
+        input_path = self.config.input_path
+        try:
+            opener = gzip.open if str(input_path).endswith(".gz") else open
+            with opener(input_path, "rt") as f:
+                for line in f:
+                    if not line.startswith("#"):
+                        # Also check first few data lines for DGRA tags
+                        if "DGRA_REGION" in line or "DGRA_SAFETYNET" in line:
+                            return True
+                        break
+                    if "DGRA_REGION" in line or "DGRA_SAFETYNET" in line:
+                        return True
+        except Exception:
+            pass
+        return False
 
     def _check_bcftools(self) -> None:
         """Check that bcftools is installed and meets minimum version.
@@ -643,3 +681,105 @@ def prefilter_vcf(
 
     engine = FilterEngine(config)
     return engine.run()
+
+
+def annotate_vcf_file(
+    input_path: str | Path,
+    output_path: str | Path,
+    preset: str = "comprehensive",
+    ref_dir: str | Path = "~/.dgra-prefilter/refs",
+    report_path: str | Path | None = None,
+) -> FilterResult:
+    """Annotate an existing VCF with DGRA_REGION and DGRA_SAFETYNET INFO tags.
+
+    This is a standalone annotation function that does NOT re-run coordinate
+    filtering. It is useful when you already have a prefiltered VCF and only
+    want to add region/safety-net annotations.
+
+    Args:
+        input_path: Input VCF/VCF.gz path (may already be prefiltered).
+        output_path: Output VCF path (.vcf.gz for compressed output).
+        preset: Preset name determining which BED files to load for annotation.
+        ref_dir: Directory containing reference BED files.
+        report_path: JSON report output path (default: same dir as output).
+
+    Returns:
+        FilterResult containing output path and annotation statistics.
+    """
+    import time
+
+    start_time = time.time()
+    input_path = Path(input_path).expanduser().resolve()
+    output_path = Path(output_path).expanduser().resolve()
+    ref_dir = Path(ref_dir).expanduser().resolve()
+
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input VCF not found: {input_path}")
+
+    preset_cfg = get_preset(preset)
+    ref_manager = RefManager(ref_dir)
+    ref_manager.validate_refs(preset_cfg)
+
+    from dgra_prefilter.annotate import VCFAnnotator
+
+    annotator = VCFAnnotator()
+    annotator.load_beds(preset_cfg, ref_dir)
+    annotation_stats = annotator.annotate_vcf(input_path, output_path)
+
+    # Build minimal stats
+    stats = FilterStats()
+    stats.input_variants = annotation_stats.region_only_variants + annotation_stats.safetynet_only_variants + annotation_stats.region_and_safetynet_variants
+    stats.retained_variants = stats.input_variants
+    stats.region_counts = annotation_stats.region_counts
+    stats.clinvar_count = annotation_stats.clinvar_count
+    stats.omim_count = annotation_stats.omim_count
+    stats.region_only_variants = annotation_stats.region_only_variants
+    stats.safetynet_only_variants = annotation_stats.safetynet_only_variants
+    stats.region_and_safetynet_variants = annotation_stats.region_and_safetynet_variants
+    stats.elapsed_seconds = time.time() - start_time
+    stats.ref_data_versions = ref_manager.get_versions()
+    stats.preset_config = {
+        "name": preset_cfg.name,
+        "gene": str(preset_cfg.gene),
+        "ncrna": str(preset_cfg.ncrna),
+        "regulatory_encode": str(preset_cfg.regulatory_encode),
+        "regulatory_encode_pls_pels_only": str(preset_cfg.regulatory_encode_pls_pels_only),
+        "regulatory_fantom5": str(preset_cfg.regulatory_fantom5),
+        "regulatory_vista": str(preset_cfg.regulatory_vista),
+        "safetynet_clinvar": str(preset_cfg.safetynet_clinvar),
+        "safetynet_omim": str(preset_cfg.safetynet_omim),
+    }
+
+    # Generate report
+    if report_path is None:
+        out_name = output_path.name
+        if out_name.endswith(".vcf.gz"):
+            report_name = out_name[:-7] + ".report.json"
+        elif out_name.endswith(".vcf"):
+            report_name = out_name[:-4] + ".report.json"
+        else:
+            report_name = out_name + ".report.json"
+        report_path = output_path.parent / report_name
+
+    from dgra_prefilter.report import ReportGenerator
+
+    config = PrefilterConfig(
+        input_path=input_path,
+        output_path=output_path,
+        preset_name=preset,
+        ref_dir=ref_dir,
+        annotate=True,
+    )
+    ReportGenerator.generate(stats, config, report_path)
+
+    logger.info(
+        "Annotation complete: %d variants annotated in %.1fs",
+        stats.retained_variants,
+        stats.elapsed_seconds,
+    )
+
+    return FilterResult(
+        output_path=output_path,
+        report_path=report_path,
+        stats=stats,
+    )

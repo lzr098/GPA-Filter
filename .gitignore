@@ -14,3 +14,5 @@ build/
 *.bed.gz.tbi
 *.vcf.gz.tbi
 *.vcf.gz.csi
+tmp/
+tmp_downloads/

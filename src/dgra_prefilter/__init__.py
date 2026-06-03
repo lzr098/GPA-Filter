@@ -15,11 +15,13 @@ from dgra_prefilter.core import (
     PrefilterConfig,
     RefDataMissingError,
     VCFProcessingError,
+    annotate_vcf_file,
     prefilter_vcf,
 )
 
 __all__ = [
     "prefilter_vcf",
+    "annotate_vcf_file",
     "FilterResult",
     "FilterStats",
     "PrefilterConfig",
