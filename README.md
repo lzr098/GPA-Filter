@@ -20,12 +20,14 @@ The tool builds BED files from three data sources, then uses `bcftools -T` to fi
 
 ### How it works
 
-1. **Build phase** (`build_refs.py`): Downloads GENCODE GTF, ENCODE SCREEN BED, and ClinVar VCF → parses and converts each into sorted BED files → merges into preset-specific composite BED files
-2. **Filter phase** (CLI/API): Loads the appropriate BED for your chosen preset → runs `bcftools view -T` for coordinate-based filtering → merges in ClinVar safety net hits
-3. **Post-filter phase** (optional, `postfilter.py`): Applies QC hard filter and removes deep intronic variants using pure coordinate-based checks (no DGRA tag dependency)
-4. **Annotation phase** (optional): Adds `DGRA_REGION` (gene/ncrna/regulatory) and `DGRA_SAFETYNET` (ClinVar) INFO tags for downstream filtering
+1. **Diagnose phase** (optional, `diagnose_vcf.py`): Scans input VCF to detect quality issues and genome version — assesses whether VCF is raw caller output, clean genotyped, or needs liftover
+2. **Preprocess phase** (optional, `preprocess_vcf.py`): Conditionally filters raw caller output (removes 0/0, REF==ALT, FILTER!=PASS) or rejects GRCh37 inputs
+3. **Build phase** (`build_refs.py`): Downloads GENCODE GTF, ENCODE SCREEN BED, and ClinVar VCF → parses and converts each into sorted BED files → merges into preset-specific composite BED files
+4. **Filter phase** (CLI/API): Loads the appropriate BED for your chosen preset → runs `bcftools view -T` for coordinate-based filtering → merges in ClinVar safety net hits
+5. **Post-filter phase** (optional, `postfilter.py`): Applies QC hard filter and removes deep intronic variants using pure coordinate-based checks (no DGRA tag dependency)
+6. **Annotation phase** (optional): Adds `DGRA_REGION` (gene/ncrna/regulatory) and `DGRA_SAFETYNET` (ClinVar) INFO tags for downstream filtering
 
-The recommended pipeline order is **filter → post-filter → annotate**, because post-filtering reduces the variant set before annotation, making the annotation step ~2× faster.
+The recommended pipeline order is **diagnose → preprocess → filter → post-filter → annotate**.
 
 The BED reference files are **static** — once built, they don't change until you manually re-run `build_refs.py` with updated source data. No live API calls during filtering.
 
@@ -75,6 +77,51 @@ result = annotate_vcf_file(
     preset="comprehensive",
 )
 ```
+
+### Input diagnosis and preprocessing
+
+Two scripts handle VCF quality issues **before** dgra-prefilter runs:
+
+#### `scripts/diagnose_vcf.py`
+
+Scans the first N variants and produces a JSON report:
+
+```bash
+python scripts/diagnose_vcf.py \
+  -i sample.vcf.gz \
+  -o diagnose_report.json
+```
+
+**Detects:**
+- `REF == ALT` variants (reference-consistent, not real variants)
+- `GT = 0/0` (homozygous reference) proportion
+- `FILTER` distribution (PASS, LowQual, `.`, etc.)
+- Genome version from contig naming (`chr1` = GRCh38, `1` = GRCh37)
+
+**Quality assessments:**
+| Assessment | Trigger | Action |
+|-----------|---------|--------|
+| `clean_genotyped` | No 0/0, no REF==ALT, uniform FILTER | Pass through |
+| `raw_caller_output` | Significant 0/0 or REF==ALT or mixed FILTER | Apply bcftools filters |
+| `needs_liftover` | GRCh37 coordinates detected | **Reject** — BEDs are GRCh38 |
+| `ambiguous` | Unclear quality or genome | Conservative filtering |
+
+#### `scripts/preprocess_vcf.py`
+
+Reads the diagnose report and applies conditional preprocessing:
+
+```bash
+python scripts/preprocess_vcf.py \
+  -i sample.vcf.gz \
+  --diagnose-report diagnose_report.json \
+  -o cleaned.vcf.gz
+```
+
+**Behavior by assessment:**
+- `needs_liftover` → exits with code 1 (user must liftover to GRCh38 first)
+- `raw_caller_output` → removes 0/0 GT, REF==ALT, and FILTER!=PASS variants
+- `clean_genotyped` → copies file through with no changes
+- `ambiguous` → warns and applies conservative filtering
 
 ### Post-filter script (QC + deep intron removal)
 
@@ -148,6 +195,13 @@ Then re-deploy the skill or reinstall the package.
 - bcftools >= 1.17
 
 ## Changelog
+
+### v1.0.2
+- Added `scripts/diagnose_vcf.py` — input quality scanner (REF==ALT, 0/0 GT, genome version inference)
+- Added `scripts/preprocess_vcf.py` — conditional preprocessing based on diagnose report
+- Added `tests/generate_demo_vcfs.py` — synthetic VCF generator for 4 test scenarios
+- Added `tests/e2e_pipeline_test.py` — end-to-end pipeline validation (4/4 tests passing)
+- Fixed missing `subprocess` import in `scripts/postfilter.py`
 
 ### v1.0.1
 - Added `_has_dgra_annotations()` to detect pre-annotated VCFs and skip redundant filtering
