@@ -46,7 +46,7 @@ LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 
 # GitHub release URL for reference data
 GITHUB_RELEASE_URL = (
-    "https://github.com/lzr098/prefilter/releases/latest/download/refs.tar.gz"
+    "https://github.com/lzr098/GPA-Filter/releases/latest/download/refs.tar.gz"
 )
 
 
