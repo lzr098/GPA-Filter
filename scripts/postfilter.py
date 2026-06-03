@@ -17,6 +17,7 @@ import gzip
 import json
 import logging
 import os
+import subprocess
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -189,9 +190,17 @@ def postfilter(
     }
 
     opener = gzip.open if str(input_vcf).endswith(".gz") else open
-    out_opener = gzip.open if str(output_vcf).endswith(".gz") else open
+    compress_output = str(output_vcf).endswith(".gz")
 
-    with opener(input_vcf, "rt") as fin, out_opener(output_vcf, "wt") as fout:
+    if compress_output:
+        import tempfile
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".vcf")
+        tmp_f = open(tmp_fd, "w", closefd=True)
+        fout = tmp_f
+    else:
+        fout = open(output_vcf, "w")
+
+    with opener(input_vcf, "rt") as fin:
         for line in fin:
             if line.startswith("#"):
                 fout.write(line)
@@ -245,6 +254,13 @@ def postfilter(
             region_key = ",".join(sorted(region_tags)) if region_tags else "other"
             stats["by_region"][region_key] += 1
             fout.write(line)
+
+    fout.close()
+    if compress_output:
+        bgzip_path = os.environ.get("BGZIP", "/Users/zhaorongli/.micromamba/envs/bcftools/bin/bgzip")
+        subprocess.run([bgzip_path, "-f", tmp_path], check=True)
+        compressed = Path(str(tmp_path) + ".gz")
+        compressed.rename(output_vcf)
 
     elapsed = time.time() - start_time
 
