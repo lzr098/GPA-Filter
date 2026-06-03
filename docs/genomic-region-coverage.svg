@@ -1,0 +1,95 @@
+<svg viewBox="0 0 680 520" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>GPA Filter genomic region coverage diagram</title>
+  <desc>Diagram showing three genomic region layers (gene loci, regulatory, safety net) and three presets that combine them differently</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <style>
+    .th { font-family: system-ui, sans-serif; font-size: 14px; font-weight: 500; fill: #2C2C2A; }
+    .ts { font-family: system-ui, sans-serif; font-size: 12px; font-weight: 400; fill: #5F5E5A; }
+    .tc { font-family: system-ui, sans-serif; font-size: 11px; font-weight: 400; fill: #888780; }
+    .tb { font-family: system-ui, sans-serif; font-size: 13px; font-weight: 500; fill: #2C2C2A; }
+    .check { font-family: system-ui, sans-serif; font-size: 14px; font-weight: 500; }
+  </style>
+
+  <text class="th" x="40" y="28">GPA Filter — genomic region coverage</text>
+  <text class="tc" x="40" y="44">Three data layers define which VCF variants to retain</text>
+
+  <!-- Layer 1: Gene Loci -->
+  <rect x="40" y="60" width="186" height="100" rx="12" fill="#E6F1FB" stroke="#378ADD" stroke-width="0.5"/>
+  <rect x="56" y="76" width="154" height="26" rx="6" fill="#B5D4F4" stroke="#378ADD" stroke-width="0.5"/>
+  <text class="tb" x="133" y="93" text-anchor="middle" dominant-baseline="central">Gene loci</text>
+  <text class="ts" x="133" y="114" text-anchor="middle">GENCODE v44 GTF</text>
+  <text class="ts" x="133" y="130" text-anchor="middle">All transcripts min→max</text>
+  <text class="ts" x="133" y="146" text-anchor="middle">protein-coding + ncRNA</text>
+
+  <!-- Layer 2: Regulatory -->
+  <rect x="247" y="60" width="186" height="100" rx="12" fill="#E1F5EE" stroke="#1D9E75" stroke-width="0.5"/>
+  <rect x="263" y="76" width="154" height="26" rx="6" fill="#9FE1CB" stroke="#1D9E75" stroke-width="0.5"/>
+  <text class="tb" x="340" y="93" text-anchor="middle" dominant-baseline="central">Regulatory elements</text>
+  <text class="ts" x="340" y="114" text-anchor="middle">ENCODE SCREEN v3</text>
+  <text class="ts" x="340" y="130" text-anchor="middle">PLS / pELS / dELS</text>
+  <text class="ts" x="340" y="146" text-anchor="middle">cCREs (cell-type agnostic)</text>
+
+  <!-- Layer 3: Safety Net -->
+  <rect x="454" y="60" width="186" height="100" rx="12" fill="#FAECE7" stroke="#D85A30" stroke-width="0.5"/>
+  <rect x="470" y="76" width="154" height="26" rx="6" fill="#F5C4B3" stroke="#D85A30" stroke-width="0.5"/>
+  <text class="tb" x="547" y="93" text-anchor="middle" dominant-baseline="central">Safety net</text>
+  <text class="ts" x="547" y="114" text-anchor="middle">ClinVar P/LP variants</text>
+  <text class="ts" x="547" y="130" text-anchor="middle">zero-omission guarantee</text>
+  <text class="ts" x="547" y="146" text-anchor="middle">catches pathogenic outside layers</text>
+
+  <!-- Down arrow -->
+  <line x1="340" y1="164" x2="340" y2="190" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- BED files row -->
+  <rect x="40" y="194" width="600" height="40" rx="8" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text class="ts" x="340" y="218" text-anchor="middle" dominant-baseline="central">Static BED position mapping tables (0-based half-open) — rebuilt via build_refs.py</text>
+
+  <!-- Down arrow -->
+  <line x1="340" y1="238" x2="340" y2="264" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- bcftools filter -->
+  <rect x="230" y="268" width="220" height="36" rx="8" fill="#EEEDFE" stroke="#7F77DD" stroke-width="0.5"/>
+  <text class="tb" x="340" y="290" text-anchor="middle" dominant-baseline="central">bcftools -T filter + merge</text>
+
+  <!-- Down arrow -->
+  <line x1="340" y1="308" x2="340" y2="334" stroke="#888780" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Presets table header -->
+  <text class="th" x="40" y="356">Preset combinations</text>
+
+  <!-- Table -->
+  <rect x="40" y="368" width="600" height="28" rx="0" fill="#D3D1C7"/>
+  <text class="ts" x="140" y="386" text-anchor="middle" dominant-baseline="central" font-weight="500">Preset</text>
+  <text class="ts" x="275" y="386" text-anchor="middle" dominant-baseline="central" font-weight="500">Gene loci</text>
+  <text class="ts" x="405" y="386" text-anchor="middle" dominant-baseline="central" font-weight="500">Regulatory</text>
+  <text class="ts" x="547" y="386" text-anchor="middle" dominant-baseline="central" font-weight="500">Safety net</text>
+
+  <!-- comprehensive row -->
+  <rect x="40" y="396" width="600" height="28" rx="0" fill="#E6F1FB" stroke="#B5D4F4" stroke-width="0.5"/>
+  <text class="ts" x="140" y="414" text-anchor="middle" dominant-baseline="central">comprehensive</text>
+  <text class="check" x="275" y="414" text-anchor="middle" dominant-baseline="central" fill="#1D9E75">Full transcript</text>
+  <text class="check" x="405" y="414" text-anchor="middle" dominant-baseline="central" fill="#1D9E75">ALL cCREs</text>
+  <text class="check" x="547" y="414" text-anchor="middle" dominant-baseline="central" fill="#1D9E75">ClinVar</text>
+
+  <!-- coding-only row -->
+  <rect x="40" y="424" width="600" height="28" rx="0" fill="white" stroke="#B4B2A9" stroke-width="0.5"/>
+  <text class="ts" x="140" y="442" text-anchor="middle" dominant-baseline="central">coding-only</text>
+  <text class="ts" x="275" y="442" text-anchor="middle" dominant-baseline="central" fill="#1D9E75">Exon + UTR</text>
+  <text class="ts" x="405" y="442" text-anchor="middle" dominant-baseline="central" fill="#D85A30">None</text>
+  <text class="check" x="547" y="442" text-anchor="middle" dominant-baseline="central" fill="#1D9E75">ClinVar</text>
+
+  <!-- regulatory-minimal row -->
+  <rect x="40" y="452" width="600" height="28" rx="0" fill="#E1F5EE" stroke="#9FE1CB" stroke-width="0.5"/>
+  <text class="ts" x="140" y="470" text-anchor="middle" dominant-baseline="central">regulatory-minimal</text>
+  <text class="check" x="275" y="470" text-anchor="middle" dominant-baseline="central" fill="#1D9E75">Full transcript</text>
+  <text class="ts" x="405" y="470" text-anchor="middle" dominant-baseline="central" fill="#378ADD">PLS/pELS only</text>
+  <text class="check" x="547" y="470" text-anchor="middle" dominant-baseline="central" fill="#1D9E75">ClinVar</text>
+
+  <!-- Footer -->
+  <text class="tc" x="40" y="502">Updates: manual re-run of build_refs.py → new BED files → re-deploy skill</text>
+</svg>
