@@ -1,214 +1,1027 @@
-# dgra-prefilter
+<h1 align="center">
+  <code>dgra-prefilter</code>
+</h1>
 
-Genomic region prefilter for whole-genome VCF files based on GENCODE, ENCODE, and ClinVar.
+<p align="center">
+  <strong>Genomic region prefilter for whole-genome VCF files</strong><br>
+  GENCODE · ENCODE · ClinVar · Zero runtime Python dependencies
+</p>
 
-## What it does
+<p align="center">
+  <a href="#中文文档">中文</a> · <a href="#english-documentation">English</a>
+</p>
 
-dgra-prefilter is a **static position mapping table** — it pre-defines which genomic regions are "interesting" so you can rapidly filter WGS VCF files to only those variants falling within biologically significant positions. It does NOT perform variant annotation; it simply keeps or discards variants based on their genomic coordinates.
+---
 
-The tool builds BED files from three data sources, then uses `bcftools -T` to filter VCF variants by position:
+<h2 id="中文文档">📖 中文文档</h2>
 
-![GPA Filter — genomic region coverage](docs/genomic-region-coverage.svg)
+### 一句话
 
-### Three data layers
+**dgra-prefilter**（GPA Filter）是一个全基因组 VCF 预过滤工具。基于预构建的保留区域 BED 文件（GENCODE 基因座、ncRNA 区域、ENCODE 调控元件）和 ClinVar 致病变异安全网，通过 `bcftools` 坐标硬过滤，将 WGS VCF 快速精简到生物学上"值得关注"的变异子集。
 
-| Layer | Source | What it covers |
-|-------|--------|---------------|
-| **Gene loci** | GENCODE v44 GTF | All transcript extents (min→max coordinates) for protein-coding genes and ncRNA |
-| **Regulatory elements** | ENCODE SCREEN v3 | cCREs — promoter-like sequences (PLS), proximal/pDistal enhancer-like sequences (pELS/dELS) |
-| **Safety net** | ClinVar | All pathogenic/likely pathogenic (P/LP) variants — guarantees zero omission of known pathogenic variants, even if they fall outside gene loci or regulatory regions |
+> ⚡ **核心特点**：零外部 Python 运行时依赖，过滤速度完全取决于 bcftools 的 BED 交集性能。百万级变异通常可在数秒内完成。
 
-### How it works
+---
 
-1. **Diagnose phase** (optional, `diagnose_vcf.py`): Scans input VCF to detect quality issues and genome version — assesses whether VCF is raw caller output, clean genotyped, or needs liftover
-2. **Preprocess phase** (optional, `preprocess_vcf.py`): Conditionally filters raw caller output (removes 0/0, REF==ALT, FILTER!=PASS) or rejects GRCh37 inputs
-3. **Build phase** (`build_refs.py`): Downloads GENCODE GTF, ENCODE SCREEN BED, and ClinVar VCF → parses and converts each into sorted BED files → merges into preset-specific composite BED files
-4. **Filter phase** (CLI/API): Loads the appropriate BED for your chosen preset → runs `bcftools view -T` for coordinate-based filtering → merges in ClinVar safety net hits
-5. **Post-filter phase** (optional, `postfilter.py`): Applies QC hard filter and removes deep intronic variants using pure coordinate-based checks (no DGRA tag dependency)
-6. **Annotation phase** (optional): Adds `DGRA_REGION` (gene/ncrna/regulatory) and `DGRA_SAFETYNET` (ClinVar) INFO tags for downstream filtering
+### 📋 目录
 
-The recommended pipeline order is **diagnose → preprocess → filter → post-filter → annotate**.
+- [功能特性](#功能特性)
+- [系统要求](#系统要求)
+- [部署方式](#部署方式)
+  - [WorkBuddy 部署](#workbuddy-部署)
+  - [CodeX / OpenClaw 部署](#codex--openclaw-部署)
+  - [通用部署（pip install / git clone）](#通用部署)
+- [依赖安装](#依赖安装)
+- [快速开始](#快速开始)
+- [CLI 使用指南](#cli-使用指南)
+- [Python API 使用](#python-api-使用)
+- [Preset 说明](#preset-说明)
+- [参考数据管理](#参考数据管理)
+- [输出说明](#输出说明)
+- [常见问题](#常见问题)
+- [测试](#测试)
 
-The BED reference files are **static** — once built, they don't change until you manually re-run `build_refs.py` with updated source data. No live API calls during filtering.
+---
 
-## Installation
+### 功能特性
+
+| 特性 | 说明 |
+|------|------|
+| 🧬 **三层数据过滤** | GENCODE 基因座 + ncRNA + ENCODE 调控元件 |
+| 🛡️ **ClinVar 安全网** | 保留所有 ClinVar 致病/可能致病变异（P/LP），即使落在基因区外 |
+| ⚡ **bcftools 硬过滤** | 基于坐标交集，无实时 API 调用，速度极快 |
+| 📦 **三种预设策略** | comprehensive / coding-only / regulatory-minimal |
+| 🏷️ **可选 INFO 标注** | DGRA_REGION / DGRA_SAFETYNET VCF 标签 |
+| 🔄 **参考数据可更新** | 支持手动更新 GENCODE / ENCODE / ClinVar 数据 |
+| 🎯 **零 Python 依赖** | 仅依赖系统 bcftools，无外部 Python 包 |
+
+---
+
+### 系统要求
+
+| 项目 | 要求 |
+|------|------|
+| Python | ≥ 3.9 |
+| bcftools | ≥ 1.17（系统级依赖，**必须预先安装**） |
+| 操作系统 | macOS / Linux / Windows (WSL) |
+| 基因组版本 | 仅支持 GRCh38 |
+
+---
+
+### 部署方式
+
+#### WorkBuddy 部署
+
+WorkBuddy 是 macOS 上的 AI 助手桌面应用，支持 Skill 扩展。
+
+**步骤 1：打开 Skill 目录**
+
+```bash
+open ~/.workbuddy/skills/
+```
+
+**步骤 2：克隆仓库到 Skill 目录**
+
+```bash
+cd ~/.workbuddy/skills/
+git clone https://github.com/lzr098/GPA-Filter.git dgra-prefilter
+```
+
+**步骤 3：安装依赖并构建参考数据**
+
+```bash
+cd dgra-prefilter
+pip install -e .                # 安装 Python 包
+python scripts/build_refs.py    # 构建参考 BED 文件（首次必需）
+```
+
+**步骤 4：重启 WorkBuddy**
+
+- WorkBuddy 自动扫描 `~/.workbuddy/skills/` 目录
+- 重启应用后，dgra-prefilter Skill 即可使用
+
+> 💡 **提示**：确保系统已安装 bcftools ≥ 1.17。WorkBuddy 也可能在 `~/.workbuddy/binaries/bcftools/` 管理 bcftools 安装。
+
+#### CodeX / OpenClaw 部署
+
+CodeX（或 OpenClaw）是命令行/IDE 集成的 AI 编程助手。
+
+**步骤 1：找到 Skill 目录**
+
+```bash
+mkdir -p ~/.codex/skills   # 或 ~/.openclaw/skills
+cd ~/.codex/skills/
+```
+
+**步骤 2：克隆仓库**
+
+```bash
+git clone https://github.com/lzr098/GPA-Filter.git dgra-prefilter
+```
+
+**步骤 3：安装**
+
+```bash
+cd dgra-prefilter
+pip install -e .
+python scripts/build_refs.py
+```
+
+**步骤 4：重启 CodeX**
+
+重启 IDE 或 CodeX 扩展，dgra-prefilter 即可在对话中使用。
+
+#### 通用部署
+
+**方式 A：pip 安装（推荐最终用户）**
 
 ```bash
 pip install dgra-prefilter
+
+# 构建参考数据
+python -m dgra_prefilter.build_refs  # 或通过源码运行 scripts/build_refs.py
 ```
 
-## Usage
-
-### CLI
+**方式 B：源码安装（推荐开发者）**
 
 ```bash
+git clone https://github.com/lzr098/GPA-Filter.git
+cd GPA-Filter
+pip install -e ".[dev]"           # 包含测试依赖
+python scripts/build_refs.py       # 构建参考 BED
+
+# 验证安装
+dgra-prefilter --version
+```
+
+---
+
+### 依赖安装
+
+#### bcftools（系统级必需）
+
+bcftools 是 dgra-prefilter 的唯一外部依赖，**必须预先安装**。
+
+**macOS（Homebrew）**：
+
+```bash
+brew install bcftools
+bcftools --version    # 确认 >= 1.17
+```
+
+**Linux（Ubuntu/Debian）**：
+
+```bash
+sudo apt-get update
+sudo apt-get install bcftools
+bcftools --version
+```
+
+**Linux（CentOS/RHEL）**：
+
+```bash
+sudo yum install bcftools
+# 或从源码编译
+```
+
+**Conda**：
+
+```bash
+conda install -c bioconda bcftools
+```
+
+#### Python 包
+
+```bash
+# 生产环境（零额外 Python 依赖）
+pip install dgra-prefilter
+
+# 开发环境
+pip install -e ".[dev]"
+
+# 构建参考数据（需要 requests）
+pip install -e ".[build]"
+```
+
+---
+
+### 快速开始
+
+```bash
+# 基础过滤：comprehensive preset（最大敏感度）
 dgra-prefilter \
   --input sample.vcf.gz \
   --output filtered.vcf.gz \
   --preset comprehensive
+
+# 仅保留编码区（最精简）
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output coding_only.vcf.gz \
+  --preset coding-only
+
+# 过滤 + 区域标注（较慢，约 1.5~2 倍时间）
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output annotated.vcf.gz \
+  --preset comprehensive \
+  --annotate
+
+# 过滤前更新参考数据
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output filtered.vcf.gz \
+  --update-refs
 ```
 
-### Python API
+---
+
+### CLI 使用指南
+
+#### 必选参数
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `-i, --input PATH` | 输入 VCF/VCF.gz/BCF | `sample.vcf.gz` |
+| `-o, --output PATH` | 输出 VCF 路径 | `filtered.vcf.gz` |
+
+#### 可选参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-p, --preset` | 预设策略：`comprehensive` / `coding-only` / `regulatory-minimal` | `comprehensive` |
+| `-g, --genome` | 基因组版本（仅 GRCh38） | `GRCh38` |
+| `--ref-dir PATH` | 参考 BED 文件目录 | `~/.dgra-prefilter/refs` |
+| `--report PATH` | JSON 报告输出路径 | 与 output 同目录 |
+| `--annotate` | 启用 DGRA_REGION / DGRA_SAFETYNET 标注 | 否 |
+| `--update-refs` | 过滤前更新参考数据 | 否 |
+| `--force` | 跳过基因组版本校验 | 否 |
+| `-v, --verbose` | 启用 DEBUG 级别日志 | 否 |
+| `--version` | 显示版本号 | — |
+
+#### 完整示例
+
+```bash
+dgra-prefilter \
+  --input /data/wgs_sample.vcf.gz \
+  --output /data/filtered.vcf.gz \
+  --preset regulatory-minimal \
+  --annotate \
+  --report /data/filter_report.json \
+  --verbose
+```
+
+#### 退出码
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 成功 |
+| 1 | 文件未找到 |
+| 2 | 基因组版本不匹配 |
+| 3 | bcftools 未安装 |
+| 4 | 参考数据缺失 |
+| 5 | VCF 处理错误 |
+| 99 | 未知错误 |
+
+---
+
+### Python API 使用
 
 ```python
-from dgra_prefilter import prefilter_vcf, annotate_vcf_file
+from dgra_prefilter import prefilter_vcf
 
-# Default: filter only, no annotation (fastest)
+# 基础过滤
 result = prefilter_vcf(
     input_path="sample.vcf.gz",
     output_path="filtered.vcf.gz",
     preset="comprehensive",
 )
-print(f"Retained {result.stats.retained_variants}/{result.stats.input_variants} variants")
 
-# Filter + annotate in one step
+print(f"保留: {result.stats.retained_variants:,} / {result.stats.input_variants:,}")
+print(f"保留率: {result.stats.retention_rate:.1%}")
+print(f"输出: {result.output_path}")
+print(f"报告: {result.report_path}")
+
+# 过滤 + 标注
 result = prefilter_vcf(
     input_path="sample.vcf.gz",
-    output_path="filtered.vcf.gz",
+    output_path="annotated.vcf.gz",
     preset="comprehensive",
     annotate=True,
 )
 
-# Annotate an existing filtered VCF without re-running coordinate filtering
-# (automatically detected if input already has DGRA tags)
-result = annotate_vcf_file(
-    input_path="already_filtered.vcf.gz",
-    output_path="filtered_annotated.vcf.gz",
-    preset="comprehensive",
+# 使用 PrefilterConfig（类型安全）
+from dgra_prefilter import PrefilterConfig
+
+config = PrefilterConfig(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    preset_name="coding-only",
+    annotate=False,
 )
+# 注意：PrefilterConfig 为 dataclass，需配合 core 内部逻辑使用
 ```
 
-### Input diagnosis and preprocessing
+#### 异常处理
 
-Two scripts handle VCF quality issues **before** dgra-prefilter runs:
+```python
+from dgra_prefilter import (
+    prefilter_vcf,
+    BcftoolsNotFoundError,
+    GenomeMismatchError,
+    RefDataMissingError,
+    VCFProcessingError,
+)
 
-#### `scripts/diagnose_vcf.py`
-
-Scans the first N variants and produces a JSON report:
-
-```bash
-python scripts/diagnose_vcf.py \
-  -i sample.vcf.gz \
-  -o diagnose_report.json
+try:
+    result = prefilter_vcf(input_path="sample.vcf.gz", output_path="out.vcf.gz")
+except BcftoolsNotFoundError:
+    print("错误：未找到 bcftools，请先安装")
+except GenomeMismatchError as e:
+    print(f"错误：基因组版本不匹配 - {e}")
+except RefDataMissingError:
+    print("错误：参考数据缺失，请运行 build_refs.py")
+except VCFProcessingError as e:
+    print(f"错误：VCF 处理失败 - {e}")
 ```
 
-**Detects:**
-- `REF == ALT` variants (reference-consistent, not real variants)
-- `GT = 0/0` (homozygous reference) proportion
-- `FILTER` distribution (PASS, LowQual, `.`, etc.)
-- Genome version from contig naming (`chr1` = GRCh38, `1` = GRCh37)
+---
 
-**Quality assessments:**
-| Assessment | Trigger | Action |
-|-----------|---------|--------|
-| `clean_genotyped` | No 0/0, no REF==ALT, uniform FILTER | Pass through |
-| `raw_caller_output` | Significant 0/0 or REF==ALT or mixed FILTER | Apply bcftools filters |
-| `needs_liftover` | GRCh37 coordinates detected | **Reject** — BEDs are GRCh38 |
-| `ambiguous` | Unclear quality or genome | Conservative filtering |
+### Preset 说明
 
-#### `scripts/preprocess_vcf.py`
+| Preset | 基因区 | ncRNA | 调控元件 | ClinVar 安全网 |
+|--------|--------|-------|----------|----------------|
+| **comprehensive** | 全转录本（外显子+内含子+UTR） | 全部 | ENCODE cCRE + FANTOM5 + Vista | P/LP |
+| **coding-only** | 仅外显子+UTR | 无 | 无 | P/LP |
+| **regulatory-minimal** | 全转录本 | 全部 | 仅 ENCODE PLS/pELS | P/LP |
 
-Reads the diagnose report and applies conditional preprocessing:
+- **comprehensive**：最大敏感度，适合发现研究或敏感度优先的场景
+- **coding-only**：最小区域集，仅蛋白编码外显子和 UTR，适合聚焦临床流程
+- **regulatory-minimal**：平衡基因覆盖与关键调控元件，跳过远端增强子
+
+> 📊 典型的全基因组 VCF（~300 万变异）使用 comprehensive preset 后保留约 **~3%** 变异。
+
+---
+
+### 参考数据管理
+
+#### 首次构建
 
 ```bash
-python scripts/preprocess_vcf.py \
-  -i sample.vcf.gz \
-  --diagnose-report diagnose_report.json \
-  -o cleaned.vcf.gz
+# 方式 1：通过 pip 安装的模块
+python -m dgra_prefilter.build_refs
+
+# 方式 2：通过源码
+python scripts/build_refs.py --output-dir ~/.dgra-prefilter/refs
 ```
 
-**Behavior by assessment:**
-- `needs_liftover` → exits with code 1 (user must liftover to GRCh38 first)
-- `raw_caller_output` → removes 0/0 GT, REF==ALT, and FILTER!=PASS variants
-- `clean_genotyped` → copies file through with no changes
-- `ambiguous` → warns and applies conservative filtering
+build_refs.py 会下载并解析：
+- GENCODE v44 GTF → 基因座 BED
+- ENCODE SCREEN v3 → cCRE BED
+- ClinVar VCF → 致病位点 BED
 
-### Post-filter script (QC + deep intron removal)
-
-The included `postfilter.py` script refines the filtered output using **pure coordinate-based checks** (no DGRA tag dependency). This means it can run on the un-annotated output of `dgra-prefilter`, allowing the optimized pipeline order:
+#### 更新参考数据
 
 ```bash
-# Step 1: Filter only (no annotate — fastest)
-dgra-prefilter --input sample.vcf.gz --output filtered.vcf.gz --preset comprehensive
+# 过滤时自动更新
+dgra-prefilter --input sample.vcf.gz --output out.vcf.gz --update-refs
 
-# Step 2: Post-filter (QC + remove deep introns)
-python scripts/postfilter.py \
-  -i filtered.vcf.gz \
-  -o postfiltered.vcf.gz \
-  --ref-dir ~/.dgra-prefilter/refs \
+# 或单独更新
+python scripts/build_refs.py --output-dir ~/.dgra-prefilter/refs
+```
+
+#### 参考数据目录结构
+
+```
+~/.dgra-prefilter/refs/
+├── gencode_gene.bed
+├── gencode_ncrna.bed
+├── gencode_coding_exon_utr.bed
+├── encode_ccre.bed
+├── encode_pls_pels.bed
+├── fantom5.bed
+├── vista.bed
+├── clinvar_pathogenic.bed
+├── omim.bed
+└── manifest.json
+```
+
+---
+
+### 输出说明
+
+#### 过滤后的 VCF
+
+- 保留落在保留区域内的变异 + ClinVar 安全网命中变异
+- 默认无新增 INFO 标签（最快）
+- `--annotate` 时添加：
+  - `DGRA_REGION`：区域类型（`gene` / `ncrna` / `regulatory`）
+  - `DGRA_SAFETYNET`：安全网来源（`ClinVar` / `OMIM`）
+
+#### JSON 报告示例
+
+```json
+{
+  "input_variants": 3204567,
+  "retained_variants": 98765,
+  "retention_rate": 0.0308,
+  "region_only_variants": 95000,
+  "safetynet_only_variants": 1200,
+  "region_and_safetynet_variants": 2565,
+  "clinvar_count": 3765,
+  "omim_count": 0,
+  "elapsed_seconds": 4.2,
+  "preset": "comprehensive",
+  "ref_data_versions": {
+    "gencode": "v44",
+    "encode": "v3",
+    "clinvar": "20240603"
+  }
+}
+```
+
+---
+
+### 常见问题
+
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| `BcftoolsNotFoundError` | bcftools 未安装或不在 PATH | 安装 bcftools ≥ 1.17 |
+| `RefDataMissingError` | 参考 BED 文件缺失 | 运行 `python scripts/build_refs.py` |
+| `GenomeMismatchError` | VCF 基因组版本非 GRCh38 | 使用 `--force` 跳过校验，或确认输入为 GRCh38 |
+| `VCFProcessingError` | bcftools 命令执行失败 | 检查 VCF 格式是否合法，查看 stderr |
+| 保留变异为 0 | BED 文件为空或路径错误 | 检查 `--ref-dir` 指向的目录 |
+| `--annotate` 非常慢 | 标注需逐变异查 BED 交集 | 这是预期行为，约 1.5~2 倍过滤时间 |
+
+---
+
+### 测试
+
+```bash
+# 安装开发依赖
+pip install -e ".[dev]"
+
+# 运行测试
+pytest
+
+# 指定测试文件
+pytest tests/test_core.py
+pytest tests/test_cli.py
+
+# 详细输出
+pytest -v
+```
+
+---
+
+<hr>
+
+<h2 id="english-documentation">📖 English Documentation</h2>
+
+### One-Liner
+
+**dgra-prefilter** (GPA Filter) is a whole-genome VCF prefiltering tool. Based on pre-built retention region BED files (GENCODE gene loci, ncRNA regions, ENCODE regulatory elements) and a ClinVar pathogenic variant safety net, it rapidly filters WGS VCF files to a biologically "interesting" variant subset through coordinate-based hard filtering via `bcftools`.
+
+> ⚡ **Core feature**: Zero external Python runtime dependencies. Filtering speed depends entirely on bcftools BED intersection performance. Millions of variants typically complete in seconds.
+
+---
+
+### Table of Contents
+
+- [Features](#features)
+- [System Requirements](#system-requirements)
+- [Deployment](#deployment)
+  - [WorkBuddy](#workbuddy-deployment)
+  - [CodeX / OpenClaw](#codex--openclaw-deployment)
+  - [Generic Deployment](#generic-deployment)
+- [Dependency Installation](#dependency-installation)
+- [Quick Start](#quick-start)
+- [CLI Usage Guide](#cli-usage-guide)
+- [Python API Usage](#python-api-usage)
+- [Presets](#presets)
+- [Reference Data Management](#reference-data-management)
+- [Output](#output)
+- [FAQ](#faq)
+- [Testing](#testing)
+
+---
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| 🧬 **Three-layer filtering** | GENCODE loci + ncRNA + ENCODE regulatory elements |
+| 🛡️ **ClinVar safety net** | Retains all ClinVar pathogenic/likely pathogenic (P/LP) variants, even outside gene loci |
+| ⚡ **bcftools hard filter** | Coordinate-based intersection, no live API calls, extremely fast |
+| 📦 **Three preset strategies** | comprehensive / coding-only / regulatory-minimal |
+| 🏷️ **Optional INFO annotation** | DGRA_REGION / DGRA_SAFETYNET VCF tags |
+| 🔄 **Updatable references** | Manual update of GENCODE / ENCODE / ClinVar data supported |
+| 🎯 **Zero Python deps** | Only requires system bcftools, no external Python packages |
+
+---
+
+### System Requirements
+
+| Item | Requirement |
+|------|-------------|
+| Python | ≥ 3.9 |
+| bcftools | ≥ 1.17 (system dependency, **must be pre-installed**) |
+| OS | macOS / Linux / Windows (WSL) |
+| Genome | GRCh38 only |
+
+---
+
+### Deployment
+
+#### WorkBuddy Deployment
+
+WorkBuddy is an AI assistant desktop app for macOS that supports Skill extensions.
+
+**Step 1: Open the Skill directory**
+
+```bash
+open ~/.workbuddy/skills/
+```
+
+**Step 2: Clone into the Skill directory**
+
+```bash
+cd ~/.workbuddy/skills/
+git clone https://github.com/lzr098/GPA-Filter.git dgra-prefilter
+```
+
+**Step 3: Install dependencies and build reference data**
+
+```bash
+cd dgra-prefilter
+pip install -e .                # Install Python package
+python scripts/build_refs.py    # Build reference BED files (required first time)
+```
+
+**Step 4: Restart WorkBuddy**
+
+- WorkBuddy auto-scans `~/.workbuddy/skills/`
+- Restart the app, then dgra-prefilter Skill is ready
+
+> 💡 **Tip**: Ensure bcftools ≥ 1.17 is installed. WorkBuddy may also manage bcftools under `~/.workbuddy/binaries/bcftools/`.
+
+#### CodeX / OpenClaw Deployment
+
+CodeX (or OpenClaw) is a command-line/IDE-integrated AI programming assistant.
+
+**Step 1: Locate the Skill directory**
+
+```bash
+mkdir -p ~/.codex/skills   # or ~/.openclaw/skills
+cd ~/.codex/skills/
+```
+
+**Step 2: Clone the repository**
+
+```bash
+git clone https://github.com/lzr098/GPA-Filter.git dgra-prefilter
+```
+
+**Step 3: Install**
+
+```bash
+cd dgra-prefilter
+pip install -e .
+python scripts/build_refs.py
+```
+
+**Step 4: Restart CodeX**
+
+Restart the IDE or CodeX extension, dgra-prefilter is available in chat.
+
+#### Generic Deployment
+
+**Option A: pip install (recommended for end users)**
+
+```bash
+pip install dgra-prefilter
+
+# Build reference data
+python -m dgra_prefilter.build_refs  # or run scripts/build_refs.py from source
+```
+
+**Option B: Source install (recommended for developers)**
+
+```bash
+git clone https://github.com/lzr098/GPA-Filter.git
+cd GPA-Filter
+pip install -e ".[dev]"           # Includes test dependencies
+python scripts/build_refs.py       # Build reference BEDs
+
+# Verify installation
+dgra-prefilter --version
+```
+
+---
+
+### Dependency Installation
+
+#### bcftools (System-level Required)
+
+bcftools is the only external dependency of dgra-prefilter and **must be pre-installed**.
+
+**macOS (Homebrew)**:
+
+```bash
+brew install bcftools
+bcftools --version    # Verify >= 1.17
+```
+
+**Linux (Ubuntu/Debian)**:
+
+```bash
+sudo apt-get update
+sudo apt-get install bcftools
+bcftools --version
+```
+
+**Linux (CentOS/RHEL)**:
+
+```bash
+sudo yum install bcftools
+# Or compile from source
+```
+
+**Conda**:
+
+```bash
+conda install -c bioconda bcftools
+```
+
+#### Python Packages
+
+```bash
+# Production (zero extra Python dependencies)
+pip install dgra-prefilter
+
+# Development
+pip install -e ".[dev]"
+
+# Building reference data (requires requests)
+pip install -e ".[build]"
+```
+
+---
+
+### Quick Start
+
+```bash
+# Basic filtering: comprehensive preset (maximum sensitivity)
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output filtered.vcf.gz \
   --preset comprehensive
 
-# Step 3: Annotate the trimmed set (~1.4M variants instead of ~3M)
-python -c "
-from dgra_prefilter import annotate_vcf_file
-annotate_vcf_file(
-    input_path='postfiltered.vcf.gz',
-    output_path='final_annotated.vcf.gz',
-    preset='comprehensive',
-)
-"
+# Keep coding regions only (most compact)
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output coding_only.vcf.gz \
+  --preset coding-only
+
+# Filter + annotate (slower, ~1.5-2x time)
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output annotated.vcf.gz \
+  --preset comprehensive \
+  --annotate
+
+# Update references before filtering
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output filtered.vcf.gz \
+  --update-refs
 ```
 
-**What it does:**
-- **QC hard filter**: Removes low-quality variants based on GATK metrics
-  - QD < 1.5, FS > 70.0, SOR > 4.0, MQ < 35.0
-  - ReadPosRankSum < -7.0, MQRankSum < -13.0, BaseQRankSum < -13.0
-- **Deep intron removal**: Keeps only coding+UTR and splice-site ±100 bp variants within gene loci; discards deep intronic variants
-- **Preserves**: ncRNA, regulatory, and ClinVar safety-net variants untouched
+---
 
-**Parameters:**
-| Flag | Description |
-|------|-------------|
-| `-i, --input` | Input filtered VCF (no DGRA tags required) |
-| `-o, --output` | Output VCF |
-| `--ref-dir` | Reference BED directory |
-| `--preset` | Preset for regulatory BED selection (`comprehensive` / `regulatory-minimal`) |
-| `--no-qc` | Skip QC filtering |
-| `--keep-deep-intron` | Keep deep intronic variants |
-| `--splice-flank` | Splice-site flank size in bp (default: 100) |
+### CLI Usage Guide
 
-## Presets
+#### Required Arguments
 
-| Preset | Gene loci | Regulatory | Safety net |
-|--------|-----------|------------|------------|
-| `comprehensive` | Full transcript (exon+intron+UTR) | ALL cCREs (PLS+pELS+dELS) | ClinVar P/LP |
-| `coding-only` | Exon + UTR only | None | ClinVar P/LP |
-| `regulatory-minimal` | Full transcript | PLS/pELS only | ClinVar P/LP |
+| Argument | Description | Example |
+|----------|-------------|---------|
+| `-i, --input PATH` | Input VCF/VCF.gz/BCF | `sample.vcf.gz` |
+| `-o, --output PATH` | Output VCF path | `filtered.vcf.gz` |
 
-- **comprehensive**: Maximum sensitivity. Retains all variants in genes, ncRNA, and regulatory elements. Best for discovery or when sensitivity is paramount.
-- **coding-only**: Minimal region set. Only protein-coding exon and UTR variants, plus ClinVar P/LP safety net. Best for focused clinical pipelines.
-- **regulatory-minimal**: Balances gene coverage with key regulatory elements (promoters and proximal enhancers). Skips distal enhancers.
+#### Optional Arguments
 
-## Updating reference data
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `-p, --preset` | Preset: `comprehensive` / `coding-only` / `regulatory-minimal` | `comprehensive` |
+| `-g, --genome` | Genome version (GRCh38 only) | `GRCh38` |
+| `--ref-dir PATH` | Reference BED files directory | `~/.dgra-prefilter/refs` |
+| `--report PATH` | JSON report output path | Same dir as output |
+| `--annotate` | Enable DGRA_REGION / DGRA_SAFETYNET tags | No |
+| `--update-refs` | Update reference data before filtering | No |
+| `--force` | Skip genome version validation | No |
+| `-v, --verbose` | Enable DEBUG logging | No |
+| `--version` | Show version | — |
 
-Reference BED files are static. To update with new GENCODE/ENCODE/ClinVar releases:
+#### Complete Example
 
 ```bash
-python scripts/build_refs.py --output-dir refs/
+dgra-prefilter \
+  --input /data/wgs_sample.vcf.gz \
+  --output /data/filtered.vcf.gz \
+  --preset regulatory-minimal \
+  --annotate \
+  --report /data/filter_report.json \
+  --verbose
 ```
 
-Then re-deploy the skill or reinstall the package.
+#### Exit Codes
 
-## Requirements
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | File not found |
+| 2 | Genome version mismatch |
+| 3 | bcftools not installed |
+| 4 | Reference data missing |
+| 5 | VCF processing error |
+| 99 | Unexpected error |
 
-- Python >= 3.9
-- bcftools >= 1.17
+---
 
-## Changelog
+### Python API Usage
 
-### v1.0.2
-- Added `scripts/diagnose_vcf.py` — input quality scanner (REF==ALT, 0/0 GT, genome version inference)
-- Added `scripts/preprocess_vcf.py` — conditional preprocessing based on diagnose report
-- Added `tests/generate_demo_vcfs.py` — synthetic VCF generator for 4 test scenarios
-- Added `tests/e2e_pipeline_test.py` — end-to-end pipeline validation (4/4 tests passing)
-- Fixed missing `subprocess` import in `scripts/postfilter.py`
+```python
+from dgra_prefilter import prefilter_vcf
 
-### v1.0.1
-- Added `_has_dgra_annotations()` to detect pre-annotated VCFs and skip redundant filtering
-- Added standalone `annotate_vcf_file()` for annotation-only workflows
-- Added `scripts/postfilter.py` for QC hard filtering and deep intron removal
+# Basic filtering
+result = prefilter_vcf(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    preset="comprehensive",
+)
 
-### v1.0.0
-- Initial release with three presets (comprehensive, coding-only, regulatory-minimal)
-- Two-phase pipeline: coordinate filtering + optional INFO annotation
-- ClinVar safety net integration
+print(f"Retained: {result.stats.retained_variants:,} / {result.stats.input_variants:,}")
+print(f"Retention: {result.stats.retention_rate:.1%}")
+print(f"Output: {result.output_path}")
+print(f"Report: {result.report_path}")
+
+# Filter + annotate
+result = prefilter_vcf(
+    input_path="sample.vcf.gz",
+    output_path="annotated.vcf.gz",
+    preset="comprehensive",
+    annotate=True,
+)
+
+# Using PrefilterConfig (type-safe)
+from dgra_prefilter import PrefilterConfig
+
+config = PrefilterConfig(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    preset_name="coding-only",
+    annotate=False,
+)
+# Note: PrefilterConfig is a dataclass, use with core internal logic
+```
+
+#### Exception Handling
+
+```python
+from dgra_prefilter import (
+    prefilter_vcf,
+    BcftoolsNotFoundError,
+    GenomeMismatchError,
+    RefDataMissingError,
+    VCFProcessingError,
+)
+
+try:
+    result = prefilter_vcf(input_path="sample.vcf.gz", output_path="out.vcf.gz")
+except BcftoolsNotFoundError:
+    print("Error: bcftools not found, please install first")
+except GenomeMismatchError as e:
+    print(f"Error: Genome version mismatch - {e}")
+except RefDataMissingError:
+    print("Error: Reference data missing, run build_refs.py")
+except VCFProcessingError as e:
+    print(f"Error: VCF processing failed - {e}")
+```
+
+---
+
+### Presets
+
+| Preset | Gene Loci | ncRNA | Regulatory | ClinVar Safety Net |
+|--------|-----------|-------|------------|---------------------|
+| **comprehensive** | Full transcript (exon+intron+UTR) | All | ENCODE cCRE + FANTOM5 + Vista | P/LP |
+| **coding-only** | Exon + UTR only | None | None | P/LP |
+| **regulatory-minimal** | Full transcript | All | ENCODE PLS/pELS only | P/LP |
+
+- **comprehensive**: Maximum sensitivity, best for discovery or sensitivity-first scenarios
+- **coding-only**: Minimal region set, only protein-coding exons and UTRs, best for focused clinical pipelines
+- **regulatory-minimal**: Balances gene coverage with key regulatory elements, skips distal enhancers
+
+> 📊 A typical whole-genome VCF (~3M variants) retains approximately **~3%** after comprehensive filtering.
+
+---
+
+### Reference Data Management
+
+#### First-time Build
+
+```bash
+# Via pip-installed module
+python -m dgra_prefilter.build_refs
+
+# Via source
+python scripts/build_refs.py --output-dir ~/.dgra-prefilter/refs
+```
+
+build_refs.py downloads and parses:
+- GENCODE v44 GTF → gene loci BED
+- ENCODE SCREEN v3 → cCRE BED
+- ClinVar VCF → pathogenic site BED
+
+#### Update References
+
+```bash
+# Auto-update during filtering
+dgra-prefilter --input sample.vcf.gz --output out.vcf.gz --update-refs
+
+# Or standalone update
+python scripts/build_refs.py --output-dir ~/.dgra-prefilter/refs
+```
+
+#### Reference Data Directory
+
+```
+~/.dgra-prefilter/refs/
+├── gencode_gene.bed
+├── gencode_ncrna.bed
+├── gencode_coding_exon_utr.bed
+├── encode_ccre.bed
+├── encode_pls_pels.bed
+├── fantom5.bed
+├── vista.bed
+├── clinvar_pathogenic.bed
+├── omim.bed
+└── manifest.json
+```
+
+---
+
+### Output
+
+#### Filtered VCF
+
+- Retains variants in retention regions + ClinVar safety net hits
+- Default: no new INFO tags (fastest)
+- With `--annotate`, adds:
+  - `DGRA_REGION`: region type (`gene` / `ncrna` / `regulatory`)
+  - `DGRA_SAFETYNET`: safety net source (`ClinVar` / `OMIM`)
+
+#### JSON Report Example
+
+```json
+{
+  "input_variants": 3204567,
+  "retained_variants": 98765,
+  "retention_rate": 0.0308,
+  "region_only_variants": 95000,
+  "safetynet_only_variants": 1200,
+  "region_and_safetynet_variants": 2565,
+  "clinvar_count": 3765,
+  "omim_count": 0,
+  "elapsed_seconds": 4.2,
+  "preset": "comprehensive",
+  "ref_data_versions": {
+    "gencode": "v44",
+    "encode": "v3",
+    "clinvar": "20240603"
+  }
+}
+```
+
+---
+
+### FAQ
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `BcftoolsNotFoundError` | bcftools not installed or not in PATH | Install bcftools ≥ 1.17 |
+| `RefDataMissingError` | Reference BED files missing | Run `python scripts/build_refs.py` |
+| `GenomeMismatchError` | VCF genome not GRCh38 | Use `--force` to skip, or confirm GRCh38 input |
+| `VCFProcessingError` | bcftools command failed | Check VCF validity, inspect stderr |
+| 0 retained variants | BED files empty or wrong path | Check `--ref-dir` directory |
+| `--annotate` very slow | Annotation requires per-variant BED lookup | Expected, ~1.5-2x filter time |
+
+---
+
+### Testing
+
+```bash
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest
+
+# Specific test file
+pytest tests/test_core.py
+pytest tests/test_cli.py
+
+# Verbose output
+pytest -v
+```
+
+---
+
+## Architecture
+
+```
+Input VCF
+    │
+    ▼
+┌─────────────────────┐
+│  Input Validation   │  VCF format, genome version (GRCh38), bcftools check
+└─────────────────────┘
+    │
+    ▼
+┌─────────────────────┐
+│  Load Reference BED │  Gene + ncRNA + Regulatory (per preset)
+│  + ClinVar Safety   │  Pathogenic/Likely pathogenic variants
+└─────────────────────┘
+    │
+    ▼
+┌─────────────────────┐
+│  bcftools view -T   │  Coordinate intersection (hard filter)
+│  + Safety Net Merge │  Union of region hits + ClinVar hits, deduplicated
+└─────────────────────┘
+    │
+    ├─ annotate ─► DGRA_REGION / DGRA_SAFETYNET INFO tags (optional)
+    │
+    ▼
+┌─────────────────────┐
+│  JSON Report        │  Statistics, retention rate, data versions
+└─────────────────────┘
+    │
+    ▼
+Output VCF + Report
+```
+
+---
+
+## Project Structure
+
+```
+dgra-prefilter/
+├── src/dgra_prefilter/           # Python package
+│   ├── __init__.py               # Public API exports
+│   ├── cli.py                    # CLI entry point
+│   ├── core.py                   # Core filtering engine
+│   ├── annotate.py               # VCF INFO annotation
+│   ├── bed_utils.py              # BED file utilities
+│   ├── presets.py                # Preset configurations
+│   ├── ref_manager.py            # Reference data management
+│   ├── report.py                 # JSON report generation
+│   ├── safetynet.py              # ClinVar/OMIM safety net
+│   └── constants.py              # Default paths and constants
+├── scripts/
+│   └── build_refs.py             # Reference BED builder
+├── tests/                        # Test suite
+│   ├── test_core.py
+│   ├── test_cli.py
+│   ├── test_annotate.py
+│   └── ...
+├── refs/                         # Reference BED files (generated)
+├── docs/
+│   └── genomic-region-coverage.svg
+├── pyproject.toml                # Package configuration
+├── README.md                     # This file
+└── .gitignore
+```
+
+---
+
+## Data Sources
+
+| Layer | Source | Version |
+|-------|--------|---------|
+| Gene loci | GENCODE | v44 |
+| Regulatory elements | ENCODE SCREEN | v3 |
+| ncRNA | GENCODE | v44 |
+| Safety net | ClinVar | Latest |
+| Additional | OMIM, FANTOM5, Vista | — |
+
+---
+
+## License
+
+MIT
+
+---
+
+**Maintainer**: [@lzr098](https://github.com/lzr098)  
+**Current Version**: 1.0.0  
+**Last Updated**: 2026-06-03
