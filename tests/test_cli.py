@@ -109,7 +109,7 @@ class TestArgsToConfig:
 
         assert config_dict["input_path"] == Path("input.vcf")
         assert config_dict["output_path"] == Path("output.vcf")
-        assert config_dict["preset_name"] == "coding-only"
+        assert config_dict["preset"] == "coding-only"
         assert config_dict["force"] is True
         assert config_dict["update_refs"] is False
         assert config_dict["genome"] == "GRCh38"

@@ -101,7 +101,7 @@ def _args_to_config(args: argparse.Namespace) -> dict:
         "input_path": args.input,
         "output_path": args.output,
         "genome": args.genome,
-        "preset_name": args.preset,
+        "preset": args.preset,
         "ref_dir": args.ref_dir,
         "report_path": args.report,
         "force": args.force,
