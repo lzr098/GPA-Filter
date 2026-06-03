@@ -22,7 +22,10 @@ The tool builds BED files from three data sources, then uses `bcftools -T` to fi
 
 1. **Build phase** (`build_refs.py`): Downloads GENCODE GTF, ENCODE SCREEN BED, and ClinVar VCF → parses and converts each into sorted BED files → merges into preset-specific composite BED files
 2. **Filter phase** (CLI/API): Loads the appropriate BED for your chosen preset → runs `bcftools view -T` for coordinate-based filtering → merges in ClinVar safety net hits
-3. **Annotation phase** (optional): Adds `DGRA_REGION` (gene/ncrna/regulatory) and `DGRA_SAFETYNET` (ClinVar) INFO tags for downstream filtering
+3. **Post-filter phase** (optional, `postfilter.py`): Applies QC hard filter and removes deep intronic variants using pure coordinate-based checks (no DGRA tag dependency)
+4. **Annotation phase** (optional): Adds `DGRA_REGION` (gene/ncrna/regulatory) and `DGRA_SAFETYNET` (ClinVar) INFO tags for downstream filtering
+
+The recommended pipeline order is **filter → post-filter → annotate**, because post-filtering reduces the variant set before annotation, making the annotation step ~2× faster.
 
 The BED reference files are **static** — once built, they don't change until you manually re-run `build_refs.py` with updated source data. No live API calls during filtering.
 
@@ -75,13 +78,28 @@ result = annotate_vcf_file(
 
 ### Post-filter script (QC + deep intron removal)
 
-After running `dgra-prefilter --annotate`, you can further refine the output with the included `postfilter.py` script — without modifying any code:
+The included `postfilter.py` script refines the filtered output using **pure coordinate-based checks** (no DGRA tag dependency). This means it can run on the un-annotated output of `dgra-prefilter`, allowing the optimized pipeline order:
 
 ```bash
+# Step 1: Filter only (no annotate — fastest)
+dgra-prefilter --input sample.vcf.gz --output filtered.vcf.gz --preset comprehensive
+
+# Step 2: Post-filter (QC + remove deep introns)
 python scripts/postfilter.py \
-  -i filtered_annotated.vcf.gz \
+  -i filtered.vcf.gz \
   -o postfiltered.vcf.gz \
-  --ref-dir ~/.dgra-prefilter/refs
+  --ref-dir ~/.dgra-prefilter/refs \
+  --preset comprehensive
+
+# Step 3: Annotate the trimmed set (~1.4M variants instead of ~3M)
+python -c "
+from dgra_prefilter import annotate_vcf_file
+annotate_vcf_file(
+    input_path='postfiltered.vcf.gz',
+    output_path='final_annotated.vcf.gz',
+    preset='comprehensive',
+)
+"
 ```
 
 **What it does:**
@@ -94,9 +112,10 @@ python scripts/postfilter.py \
 **Parameters:**
 | Flag | Description |
 |------|-------------|
-| `-i, --input` | Input annotated VCF |
+| `-i, --input` | Input filtered VCF (no DGRA tags required) |
 | `-o, --output` | Output VCF |
 | `--ref-dir` | Reference BED directory |
+| `--preset` | Preset for regulatory BED selection (`comprehensive` / `regulatory-minimal`) |
 | `--no-qc` | Skip QC filtering |
 | `--keep-deep-intron` | Keep deep intronic variants |
 | `--splice-flank` | Splice-site flank size in bp (default: 100) |
