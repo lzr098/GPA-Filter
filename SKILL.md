@@ -40,6 +40,7 @@ description: |
 | report | string | 否 | 与 output 同目录 | JSON 报告输出路径 |
 | force | boolean | 否 | false | 跳过基因组版本校验 |
 | update_refs | boolean | 否 | false | 触发参考数据更新 |
+| annotate | boolean | 否 | false | 启用 DGRA_REGION/DGRA_SAFETYNET INFO 标注（较慢） |
 
 ### Preset 说明
 
@@ -52,8 +53,22 @@ description: |
 ## Output
 
 ### 文件输出
-- 过滤后的 VCF/VCF.gz 文件（含 DGRA_REGION 和 DGRA_SAFETYNET INFO 标注）
+- 过滤后的 VCF/VCF.gz 文件（默认无 INFO 标注；加 `--annotate` 后含 DGRA_REGION / DGRA_SAFETYNET）
 - JSON 统计报告
+
+### 固定 Pipeline（两阶段）
+
+**Phase 1 – 坐标过滤（始终运行）**
+1. 输入校验（VCF 格式、基因组版本、bcftools）
+2. 加载参考 BED（gene + ncRNA + cCRE）并合并
+3. `bcftools view -T` 坐标硬过滤
+4. ClinVar 安全网提取 + 合并去重
+
+**Phase 2 – INFO 标注（可选，`--annotate`）**
+5. 逐行添加 DGRA_REGION / DGRA_SAFETYNET 标签（Python bisect，较慢）
+
+**Phase 3 – 报告（始终运行）**
+6. 生成 JSON 统计报告
 
 ### Skill 返回格式
 ```
@@ -85,6 +100,9 @@ Requires: Python >= 3.9, bcftools >= 1.17
 用户：「用最小调控区域过滤这个 VCF」
 → dgra-prefilter --input /path/to/sample.vcf.gz --preset regulatory-minimal
 
+用户：「过滤后还要标注每个变异落在哪个区域」
+→ dgra-prefilter --input /path/to/sample.vcf.gz --preset comprehensive --annotate
+
 用户：「帮我更新参考数据」
 → dgra-prefilter --update-refs
 
@@ -93,12 +111,20 @@ Requires: Python >= 3.9, bcftools >= 1.17
 ```python
 from dgra_prefilter import prefilter_vcf
 
+# 默认：只过滤，不标注（最快）
 result = prefilter_vcf(
     input_path="sample.vcf.gz",
     output_path="filtered.vcf.gz",
     preset="comprehensive",
 )
-```
+
+# 启用标注（较慢）
+result = prefilter_vcf(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    preset="comprehensive",
+    annotate=True,
+)
 
 ## GitHub
 
