@@ -16,3 +16,6 @@ build/
 *.vcf.gz.csi
 tmp/
 tmp_downloads/
+
+# Large reference data files (>1MB) — generate locally from ClinVar VCF
+refs/clinvar_pathogenic_GRCh38.bed
