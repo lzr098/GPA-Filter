@@ -104,28 +104,35 @@ class ClinVarSafetyNet(SafetyNetProvider):
             return False
 
 
-# v2.0 implementation placeholder:
-# class OMIMSafetyNet(SafetyNetProvider):
-#     """OMIM pathogenic variants safety net (v2.0)."""
-#
-#     BED_FILENAME = "omim_pathogenic_GRCh38.bed"
-#
-#     def get_bed_path(self, ref_dir: Path) -> Path:
-#         return ref_dir / self.BED_FILENAME
-#
-#     def get_tag(self) -> str:
-#         return "OMIM"
-#
-#     def is_available(self, ref_dir: Path) -> bool:
-#         path = self.get_bed_path(ref_dir)
-#         if not path.exists():
-#             return False
-#         try:
-#             with open(path, "r") as f:
-#                 for line in f:
-#                     stripped = line.strip()
-#                     if stripped and not stripped.startswith("track") and not stripped.startswith("#"):
-#                         return True
-#             return False
-#         except OSError:
-#             return False
+# v2.0 implementation — activated 2026-06-07 with local OMIM SQLite
+class OMIMSafetyNet(SafetyNetProvider):
+    """OMIM Mendelian disease gene safety net (v2.0).
+
+    Protects all known Mendelian disease genes from being filtered out.
+    BED file contains gene coordinates for all OMIM entries with disease
+    associations (prefix: #, %, or + with phenotypeMap entries).
+
+    Generated via: bcftools query to extract gene coordinates from OMIM SQLite.
+    """
+
+    BED_FILENAME = "omim_pathogenic_GRCh38.bed"
+
+    def get_bed_path(self, ref_dir: Path) -> Path:
+        return ref_dir / self.BED_FILENAME
+
+    def get_tag(self) -> str:
+        return "OMIM"
+
+    def is_available(self, ref_dir: Path) -> bool:
+        path = self.get_bed_path(ref_dir)
+        if not path.exists():
+            return False
+        try:
+            with open(path, "r") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("track") and not stripped.startswith("#"):
+                        return True
+            return False
+        except OSError:
+            return False
