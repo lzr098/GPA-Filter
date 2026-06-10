@@ -56,13 +56,13 @@ ENCODE_SCREEN_URL = (
     "format=gz&assembly=GRCh38&accession=ENCSR000AIZ&fileType=bed"
 )
 FANTOM5_URL = (
-    "http://fantom.gsc.riken.jp/5/data/hg38/robust/"
+    "https://fantom.gsc.riken.jp/5/data/hg38/robust/"
     "hg38_enhancers.bed"
 )
 VISTA_URL = "https://enhancer.lbl.gov/cgi-bin/imagedb3.pl?form=download"
 CLINVAR_VCF_URL = (
     "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/"
-    "clinvar_20260530.vcf.gz"
+    "clinvar.vcf.gz"
 )
 
 # GENCODE biotype categories
@@ -113,8 +113,14 @@ def _download_file(url: str, output_path: Path) -> Path:
     Raises:
         RuntimeError: If download fails.
     """
-    logger.info("Downloading %s to %s", url, output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Cache check: skip download if file exists and non-empty
+    if output_path.exists() and output_path.stat().st_size > 0:
+        logger.info("Using cached file: %s (%d bytes)", output_path, output_path.stat().st_size)
+        return output_path
+
+    logger.info("Downloading %s to %s", url, output_path)
 
     for cmd_name in ["curl", "wget"]:
         try:
@@ -178,6 +184,10 @@ def build_gencode_beds(gtf_path: Path, output_dir: Path) -> None:
     three_utr: dict[str, list[tuple[int, int]]] = {}
     # Exon coordinates per transcript for splice-site derivation
     transcript_exons: dict[str, dict[str, list[tuple[int, int]]]] = {}
+    # Transcript CDS ranges for UTR classification (tid -> (strand, cds_min, cds_max))
+    transcript_cds: dict[str, tuple[str, int, int]] = {}
+    # Deferred UTR entries: (chrom, bed_start, bed_end, transcript_id, strand)
+    utr_entries: list[tuple[str, int, int, str, str]] = []
 
     opener = gzip.open if str(gtf_path).endswith(".gz") else open
     with opener(gtf_path, "rt") as f:
@@ -192,6 +202,7 @@ def build_gencode_beds(gtf_path: Path, output_dir: Path) -> None:
             feature = parts[2]
             start = int(parts[3])  # GTF is 1-based
             end = int(parts[4])    # GTF is 1-based, closed
+            strand = parts[6]
             attributes_str = parts[8]
 
             # Skip non-standard chromosomes
@@ -245,10 +256,24 @@ def build_gencode_beds(gtf_path: Path, output_dir: Path) -> None:
                     if chrom not in three_utr:
                         three_utr[chrom] = []
                     three_utr[chrom].append((bed_start, bed_end))
+                elif feature == "UTR":
+                    # Defer classification until we know CDS ranges
+                    if transcript_id:
+                        utr_entries.append((chrom, bed_start, bed_end, transcript_id, strand))
                 elif feature == "CDS":
                     if chrom not in cds_regions:
                         cds_regions[chrom] = []
                     cds_regions[chrom].append((bed_start, bed_end))
+                    if transcript_id:
+                        if transcript_id not in transcript_cds:
+                            transcript_cds[transcript_id] = (strand, bed_start, bed_end)
+                        else:
+                            prev_strand, prev_min, prev_max = transcript_cds[transcript_id]
+                            transcript_cds[transcript_id] = (
+                                prev_strand,
+                                min(prev_min, bed_start),
+                                max(prev_max, bed_end),
+                            )
                 elif feature == "exon" and transcript_id:
                     if transcript_id not in transcript_exons:
                         transcript_exons[transcript_id] = {}
@@ -257,6 +282,30 @@ def build_gencode_beds(gtf_path: Path, output_dir: Path) -> None:
                     transcript_exons[transcript_id][chrom].append(
                         (bed_start, bed_end)
                     )
+
+    # Classify deferred UTR entries
+    for chrom, bed_start, bed_end, transcript_id, strand in utr_entries:
+        if transcript_id not in transcript_cds:
+            continue
+        _, cds_min, cds_max = transcript_cds[transcript_id]
+        if strand == "+":
+            if bed_end <= cds_min:
+                if chrom not in five_utr:
+                    five_utr[chrom] = []
+                five_utr[chrom].append((bed_start, bed_end))
+            elif bed_start >= cds_max:
+                if chrom not in three_utr:
+                    three_utr[chrom] = []
+                three_utr[chrom].append((bed_start, bed_end))
+        else:  # strand == "-"
+            if bed_end <= cds_min:
+                if chrom not in three_utr:
+                    three_utr[chrom] = []
+                three_utr[chrom].append((bed_start, bed_end))
+            elif bed_start >= cds_max:
+                if chrom not in five_utr:
+                    five_utr[chrom] = []
+                five_utr[chrom].append((bed_start, bed_end))
 
     # Sort and merge gene loci
     for chrom in gene_loci:
@@ -912,147 +961,156 @@ def main() -> None:
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix="dgra_build_refs_") as tmp_dir:
-        tmp_path = Path(tmp_dir)
+    cache_dir = output_dir / ".cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_dir
 
-        # Build GENCODE BEDs
-        if args.gencode_gtf:
-            gencode_path = args.gencode_gtf
-        elif not args.skip_download:
-            gencode_path = tmp_path / "gencode.v44.annotation.gtf.gz"
-            _download_file(GENCODE_GTF_URL, gencode_path)
-        else:
-            logger.warning("No GENCODE GTF provided and --skip-download set, skipping")
-            gencode_path = None
+    # Build GENCODE BEDs
+    if args.gencode_gtf:
+        gencode_path = args.gencode_gtf
+    elif not args.skip_download:
+        gencode_path = tmp_path / "gencode.v44.annotation.gtf.gz"
+        _download_file(GENCODE_GTF_URL, gencode_path)
+    else:
+        logger.warning("No GENCODE GTF provided and --skip-download set, skipping")
+        gencode_path = None
 
-        if gencode_path and gencode_path.exists():
-            build_gencode_beds(gencode_path, output_dir)
-        else:
-            logger.warning("GENCODE GTF not available, creating empty BED files")
-            for bed_name in [
-                GENCODE_GENE_BED,
-                GENCODE_NCRNA_BED,
-                GENCODE_CODING_EXON_UTR_BED,
-                GENCODE_5UTR_BED,
-                GENCODE_CDS_BED,
-                GENCODE_3UTR_BED,
-                GENCODE_SPLICE_BED,
-            ]:
-                (output_dir / bed_name).touch()
-                write_version_file(output_dir, bed_name, "missing")
+    if gencode_path and gencode_path.exists():
+        build_gencode_beds(gencode_path, output_dir)
+    else:
+        logger.warning("GENCODE GTF not available, creating empty BED files")
+        for bed_name in [
+            GENCODE_GENE_BED,
+            GENCODE_NCRNA_BED,
+            GENCODE_CODING_EXON_UTR_BED,
+            GENCODE_5UTR_BED,
+            GENCODE_CDS_BED,
+            GENCODE_3UTR_BED,
+            GENCODE_SPLICE_BED,
+        ]:
+            (output_dir / bed_name).touch()
+            write_version_file(output_dir, bed_name, "missing")
 
-        # Build ENCODE BEDs
-        if args.encode_tsv:
-            encode_path = args.encode_tsv
-        elif not args.skip_download:
-            encode_path = tmp_path / "encode_screen_v3.tsv.gz"
-            try:
-                _download_file(ENCODE_SCREEN_URL, encode_path)
-            except RuntimeError:
-                logger.warning("ENCODE SCREEN download failed")
-                encode_path = None
-        else:
+    # Build ENCODE BEDs
+    if args.encode_tsv:
+        encode_path = args.encode_tsv
+    elif not args.skip_download:
+        encode_path = tmp_path / "encode_screen_v3.tsv.gz"
+        try:
+            _download_file(ENCODE_SCREEN_URL, encode_path)
+        except RuntimeError:
+            logger.warning("ENCODE SCREEN download failed")
             encode_path = None
+    else:
+        encode_path = None
 
-        if encode_path and encode_path.exists():
-            try:
-                build_encode_beds(encode_path, output_dir)
-            except (OSError, gzip.BadGzipFile, ValueError) as exc:
-                logger.warning("ENCODE SCREEN data invalid (%s), creating empty BED files", exc)
-                for bed_name in [ENCODE_CCRE_BED, ENCODE_PLS_PELS_BED, ENCODE_BALANCED_BED]:
-                    (output_dir / bed_name).touch()
-                    write_version_file(output_dir, bed_name, "missing")
-        else:
-            logger.warning("ENCODE SCREEN not available, creating empty BED files")
+    if encode_path and encode_path.exists():
+        try:
+            build_encode_beds(encode_path, output_dir)
+        except (OSError, gzip.BadGzipFile, ValueError) as exc:
+            logger.warning("ENCODE SCREEN data invalid (%s), creating empty BED files", exc)
             for bed_name in [ENCODE_CCRE_BED, ENCODE_PLS_PELS_BED, ENCODE_BALANCED_BED]:
-                (output_dir / bed_name).touch()
+                bed_path = output_dir / bed_name
+                if bed_path.exists() and bed_path.stat().st_size > 0:
+                    logger.info("Preserving existing BED: %s", bed_name)
+                else:
+                    bed_path.touch()
+                    write_version_file(output_dir, bed_name, "missing")
+    else:
+        logger.warning("ENCODE SCREEN not available, creating empty BED files")
+        for bed_name in [ENCODE_CCRE_BED, ENCODE_PLS_PELS_BED, ENCODE_BALANCED_BED]:
+            bed_path = output_dir / bed_name
+            if bed_path.exists() and bed_path.stat().st_size > 0:
+                logger.info("Preserving existing BED: %s", bed_name)
+            else:
+                bed_path.touch()
                 write_version_file(output_dir, bed_name, "missing")
 
-        # Build FANTOM5 BED
-        if args.fantom5_file:
-            fantom5_path = args.fantom5_file
-        elif not args.skip_download:
-            fantom5_path = tmp_path / "fantom5_enhancers.bed"
-            try:
-                _download_file(FANTOM5_URL, fantom5_path)
-            except RuntimeError:
-                logger.warning("FANTOM5 download failed")
-                fantom5_path = None
-        else:
+    # Build FANTOM5 BED
+    if args.fantom5_file:
+        fantom5_path = args.fantom5_file
+    elif not args.skip_download:
+        fantom5_path = tmp_path / "fantom5_enhancers.bed"
+        try:
+            _download_file(FANTOM5_URL, fantom5_path)
+        except RuntimeError:
+            logger.warning("FANTOM5 download failed")
             fantom5_path = None
+    else:
+        fantom5_path = None
 
-        if fantom5_path and fantom5_path.exists():
-            build_fantom5_bed(fantom5_path, output_dir)
-        else:
-            logger.warning("FANTOM5 not available, creating empty BED file")
-            (output_dir / FANTOM5_BED).touch()
-            write_version_file(output_dir, FANTOM5_BED, "missing")
+    if fantom5_path and fantom5_path.exists():
+        build_fantom5_bed(fantom5_path, output_dir)
+    else:
+        logger.warning("FANTOM5 not available, creating empty BED file")
+        (output_dir / FANTOM5_BED).touch()
+        write_version_file(output_dir, FANTOM5_BED, "missing")
 
-        # Build Vista BED
-        if args.vista_file:
-            vista_path = args.vista_file
-        elif not args.skip_download:
-            vista_path = tmp_path / "vista_enhancers.tsv"
-            try:
-                _download_file(VISTA_URL, vista_path)
-            except RuntimeError:
-                logger.warning("Vista download failed")
-                vista_path = None
-        else:
+    # Build Vista BED
+    if args.vista_file:
+        vista_path = args.vista_file
+    elif not args.skip_download:
+        vista_path = tmp_path / "vista_enhancers.tsv"
+        try:
+            _download_file(VISTA_URL, vista_path)
+        except RuntimeError:
+            logger.warning("Vista download failed")
             vista_path = None
+    else:
+        vista_path = None
 
-        if vista_path and vista_path.exists():
-            build_vista_bed(vista_path, output_dir)
-        else:
-            logger.warning("Vista not available, creating empty BED file")
-            (output_dir / VISTA_BED).touch()
-            write_version_file(output_dir, VISTA_BED, "missing")
+    if vista_path and vista_path.exists():
+        build_vista_bed(vista_path, output_dir)
+    else:
+        logger.warning("Vista not available, creating empty BED file")
+        (output_dir / VISTA_BED).touch()
+        write_version_file(output_dir, VISTA_BED, "missing")
 
-        # Build ClinVar BED
-        if args.clinvar_vcf:
-            clinvar_path = args.clinvar_vcf
-        elif not args.skip_download:
-            clinvar_path = tmp_path / "clinvar.vcf.gz"
-            try:
-                _download_file(CLINVAR_VCF_URL, clinvar_path)
-            except RuntimeError:
-                logger.warning("ClinVar download failed")
-                clinvar_path = None
-        else:
+    # Build ClinVar BED
+    if args.clinvar_vcf:
+        clinvar_path = args.clinvar_vcf
+    elif not args.skip_download:
+        clinvar_path = tmp_path / "clinvar.vcf.gz"
+        try:
+            _download_file(CLINVAR_VCF_URL, clinvar_path)
+        except RuntimeError:
+            logger.warning("ClinVar download failed")
             clinvar_path = None
+    else:
+        clinvar_path = None
 
-        if clinvar_path and clinvar_path.exists():
-            build_clinvar_bed(clinvar_path, output_dir)
-        else:
-            logger.warning("ClinVar not available, creating empty BED file")
-            (output_dir / CLINVAR_BED).touch()
-            write_version_file(output_dir, CLINVAR_BED, "missing")
+    if clinvar_path and clinvar_path.exists():
+        build_clinvar_bed(clinvar_path, output_dir)
+    else:
+        logger.warning("ClinVar not available, creating empty BED file")
+        (output_dir / CLINVAR_BED).touch()
+        write_version_file(output_dir, CLINVAR_BED, "missing")
 
-        # Build Ensembl Regulatory BED
-        if args.ensembl_file:
-            ensembl_path = args.ensembl_file
-        elif not args.skip_download:
-            ensembl_path = tmp_path / "ensembl_regulatory.gff3.gz"
-            try:
-                _download_file(ENSEMBL_REGULATORY_URL, ensembl_path)
-            except RuntimeError:
-                logger.warning("Ensembl Regulatory Build download failed")
-                ensembl_path = None
-        else:
+    # Build Ensembl Regulatory BED
+    if args.ensembl_file:
+        ensembl_path = args.ensembl_file
+    elif not args.skip_download:
+        ensembl_path = tmp_path / "ensembl_regulatory.gff3.gz"
+        try:
+            _download_file(ENSEMBL_REGULATORY_URL, ensembl_path)
+        except RuntimeError:
+            logger.warning("Ensembl Regulatory Build download failed")
             ensembl_path = None
+    else:
+        ensembl_path = None
 
-        if ensembl_path and ensembl_path.exists():
-            build_ensembl_regulatory_bed(ensembl_path, output_dir)
-        else:
-            logger.warning("Ensembl Regulatory Build not available, creating empty BED file")
-            (output_dir / ENSEMBL_REGULATORY_BED).touch()
-            write_version_file(output_dir, ENSEMBL_REGULATORY_BED, "missing")
+    if ensembl_path and ensembl_path.exists():
+        build_ensembl_regulatory_bed(ensembl_path, output_dir)
+    else:
+        logger.warning("Ensembl Regulatory Build not available, creating empty BED file")
+        (output_dir / ENSEMBL_REGULATORY_BED).touch()
+        write_version_file(output_dir, ENSEMBL_REGULATORY_BED, "missing")
 
-        # Build OMIM placeholder
-        build_omim_bed(output_dir)
+    # Build OMIM placeholder
+    build_omim_bed(output_dir)
 
-        # Build merged retained regions
-        build_merged_retained(output_dir)
+    # Build merged retained regions
+    build_merged_retained(output_dir)
 
     logger.info("All reference BED files built in %s", output_dir)
 
