@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 from dgra_prefilter.bed_utils import BedUtils
-from dgra_prefilter.constants import GITHUB_RELEASE_URL
+from dgra_prefilter.constants import GENCODE_CODING_EXON_UTR_BED, GITHUB_RELEASE_URL
 from dgra_prefilter.presets import PresetConfig
 
 logger = logging.getLogger(__name__)
@@ -79,18 +79,38 @@ class RefManager:
         """
         return self.ref_dir / bed_name
 
-    def merge_preset_beds(self, preset: PresetConfig, output: Path) -> Path:
+    def merge_preset_beds(
+        self, preset: PresetConfig, output: Path, splice_window: int = 0
+    ) -> Path:
         """Merge all region BED files required by a preset into one file.
 
         Args:
             preset: The preset configuration.
             output: Path for the merged output BED file.
+            splice_window: If > 0, expand the gene exon/UTR BED by this
+                many bp on each side before merging.
 
         Returns:
             Path to the merged BED file.
         """
         bed_names = preset.get_region_bed_names()
-        paths = [self.get_bed_path(name) for name in bed_names]
+        paths: list[Path] = []
+        for name in bed_names:
+            bed_path = self.get_bed_path(name)
+            if (
+                splice_window > 0
+                and name == GENCODE_CODING_EXON_UTR_BED
+            ):
+                # Dynamically expand exon/UTR intervals into temp dir
+                expanded_path = output.with_name(
+                    f"gencode_v44_coding_exon_utr.expanded{splice_window}.bed"
+                )
+                BedUtils.expand_bed_intervals(
+                    bed_path, expanded_path, splice_window
+                )
+                paths.append(expanded_path)
+            else:
+                paths.append(bed_path)
         return BedUtils.merge_bed_files(paths, output)
 
     def update_refs(self) -> None:

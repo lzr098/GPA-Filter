@@ -46,8 +46,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-p", "--preset",
         default="comprehensive",
-        choices=["comprehensive", "coding-only", "regulatory-minimal", "regulatory-balanced"],
+        choices=["comprehensive", "comprehensive-splice100", "coding-only", "regulatory-minimal", "regulatory-balanced"],
         help="Filter preset (default: comprehensive)",
+    )
+    parser.add_argument(
+        "-I", "--interactive",
+        action="store_true",
+        default=False,
+        help="Interactively prompt for preset selection before filtering",
     )
     parser.add_argument(
         "--ref-dir",
@@ -130,6 +136,7 @@ def _args_to_config(args: argparse.Namespace) -> dict:
         "annotate": args.annotate,
         "regulatory_source": args.regulatory_source,
         "keep_all_chrM": args.keep_all_chrM,
+        "interactive": args.interactive,
     }
 
 

@@ -38,6 +38,7 @@ class PresetConfig:
     safetynet_omim: bool
     regulatory_source: str = "fantom5"
     keep_all_chrM: bool = False
+    splice_window: int = 0
 
     def get_region_bed_names(self) -> list[str]:
         """Return the list of region BED filenames needed by this preset.
@@ -54,6 +55,8 @@ class PresetConfig:
                     GENCODE_3UTR_BED,
                     GENCODE_SPLICE_BED,
                 ])
+            elif self.splice_window > 0:
+                beds.append(GENCODE_CODING_EXON_UTR_BED)
             else:
                 beds.append(GENCODE_GENE_BED)
         if self.ncrna:
@@ -140,6 +143,19 @@ PRESETS: dict[str, PresetConfig] = {
         safetynet_clinvar=True,
         safetynet_omim=True,
     ),
+    "comprehensive-splice100": PresetConfig(
+        name="comprehensive-splice100",
+        gene=True,
+        ncrna=True,
+        regulatory_encode=True,
+        regulatory_encode_pls_pels_only=False,
+        regulatory_encode_balanced=False,
+        regulatory_fantom5=True,
+        regulatory_vista=True,
+        safetynet_clinvar=True,
+        safetynet_omim=True,
+        splice_window=100,
+    ),
 }
 
 
@@ -147,7 +163,7 @@ def get_preset(name: str) -> PresetConfig:
     """Look up a preset by name.
 
     Args:
-        name: Preset name (comprehensive, coding-only, regulatory-minimal, regulatory-balanced).
+        name: Preset name (comprehensive, comprehensive-splice100, coding-only, regulatory-minimal, regulatory-balanced).
 
     Returns:
         The corresponding PresetConfig.

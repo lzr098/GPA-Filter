@@ -154,6 +154,42 @@ class BedUtils:
         return merged
 
     @staticmethod
+    def expand_bed_intervals(
+        input_path: Path,
+        output_path: Path,
+        expand_by: int,
+    ) -> Path:
+        """Expand each interval in a BED file by a fixed number of base pairs.
+
+        Each interval is extended symmetrically on both sides. Negative
+        start coordinates are clamped to 0. Overlapping/adjacent intervals
+        are merged after expansion.
+
+        Args:
+            input_path: Input BED file path.
+            output_path: Output path for the expanded BED file.
+            expand_by: Number of bp to add to each side of every interval.
+
+        Returns:
+            Path to the output BED file.
+        """
+        data = BedUtils.load_bed(input_path)
+        expanded: dict[str, list[tuple[int, int]]] = {}
+
+        for chrom, intervals in data.items():
+            expanded[chrom] = []
+            for start, end in intervals:
+                new_start = max(0, start - expand_by)
+                new_end = end + expand_by
+                expanded[chrom].append((new_start, new_end))
+
+            # Merge overlapping intervals after expansion
+            expanded[chrom] = BedUtils.merge_intervals(expanded[chrom])
+
+        BedUtils.write_bed(expanded, output_path)
+        return output_path
+
+    @staticmethod
     def merge_bed_files(paths: list[Path], output: Path) -> Path:
         """Merge multiple BED files into a single file with overlapping intervals merged.
 

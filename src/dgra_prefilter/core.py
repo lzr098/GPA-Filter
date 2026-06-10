@@ -67,6 +67,48 @@ class VCFProcessingError(Exception):
 # Data classes
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_path_with_quotes(path: Path) -> Path:
+    """Normalize a path, handling macOS Unicode quotation marks.
+
+    macOS creates user directories like "Documents - User's MacBook Air"
+    using Unicode U+2019 (right single quotation mark) instead of ASCII
+    U+0027. When users drag files into the chat, the quote character may
+    not match the filesystem. This helper tries both variants.
+
+    Args:
+        path: Raw path (may contain ~, relative segments, or Unicode quotes).
+
+    Returns:
+        Resolved absolute path that exists on the filesystem.
+    """
+    # Standard normalization first
+    expanded = path.expanduser()
+    if expanded.exists():
+        return expanded.resolve()
+
+    # Try replacing Unicode right single quote (U+2019) with ASCII single quote
+    ascii_path = Path(str(expanded).replace("\u2019", "'"))
+    if ascii_path.exists():
+        return ascii_path.resolve()
+
+    # Try the reverse: ASCII -> Unicode
+    unicode_path = Path(str(expanded).replace("'", "\u2019"))
+    if unicode_path.exists():
+        return unicode_path.resolve()
+
+    # Fallback: return the originally expanded path (will fail later with
+    # a clear FileNotFoundError)
+    return expanded.resolve()
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
 @dataclass
 class PrefilterConfig:
     """Configuration for a prefilter run."""
@@ -85,11 +127,11 @@ class PrefilterConfig:
 
     def __post_init__(self) -> None:
         """Normalize paths after initialization."""
-        self.input_path = Path(self.input_path).expanduser().resolve()
-        self.output_path = Path(self.output_path).expanduser().resolve()
-        self.ref_dir = Path(self.ref_dir).expanduser().resolve()
+        self.input_path = _normalize_path_with_quotes(Path(self.input_path))
+        self.output_path = _normalize_path_with_quotes(Path(self.output_path))
+        self.ref_dir = _normalize_path_with_quotes(Path(self.ref_dir))
         if self.report_path is not None:
-            self.report_path = Path(self.report_path).expanduser().resolve()
+            self.report_path = _normalize_path_with_quotes(Path(self.report_path))
 
 
 @dataclass
@@ -123,6 +165,70 @@ class FilterResult:
     output_path: Path
     report_path: Path
     stats: FilterStats
+
+
+# ---------------------------------------------------------------------------
+# Interactive preset selector
+# ---------------------------------------------------------------------------
+
+def _ask_preset(default: str = "comprehensive") -> str:
+    """Interactively ask the user to choose a filter preset.
+
+    Displays available presets with descriptions and waits for user input.
+
+    Args:
+        default: Default preset if user just presses Enter.
+
+    Returns:
+        Selected preset name.
+    """
+    print("\n" + "=" * 60)
+    print("  dgra-prefilter: 请选择过滤预设")
+    print("=" * 60)
+    print()
+    print("  [1] comprehensive          — 全基因座 (gene loci + ncRNA + 调控元件)")
+    print("      保留率: ~50-60% | 包含内含子全区域")
+    print()
+    print("  [2] comprehensive-splice100 — Exon/UTR + 100bp 剪接区 + ncRNA + 调控元件")
+    print("      保留率: ~25-30% | 去除深度内含子")
+    print()
+    print("  [3] coding-only            — 仅编码外显子 + UTR")
+    print("      保留率: ~1-3% | 最保守")
+    print()
+    print("  [4] regulatory-minimal     — 仅 PLS/pELS 调控元件 + 基因")
+    print("      保留率: ~10-20% | 调控 focused")
+    print()
+    print("  [5] regulatory-balanced    — 平衡调控 + 基因")
+    print("      保留率: ~15-25% | 平衡策略")
+    print()
+    print("=" * 60)
+
+    choices = {
+        "1": "comprehensive",
+        "2": "comprehensive-splice100",
+        "3": "coding-only",
+        "4": "regulatory-minimal",
+        "5": "regulatory-balanced",
+        "comprehensive": "comprehensive",
+        "comprehensive-splice100": "comprehensive-splice100",
+        "coding-only": "coding-only",
+        "regulatory-minimal": "regulatory-minimal",
+        "regulatory-balanced": "regulatory-balanced",
+    }
+
+    while True:
+        try:
+            choice = input(f"选择 [1-5] (默认: {default}): ").strip()
+            if not choice:
+                return default
+            if choice in choices:
+                selected = choices[choice]
+                print(f"已选择: {selected}\n")
+                return selected
+            print(f"无效输入 '{choice}'，请重新选择。\n")
+        except (EOFError, KeyboardInterrupt):
+            print("\n使用默认预设...")
+            return default
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +322,9 @@ class FilterEngine:
                 logger.info("Stage 2/6: Reference loading and BED merging")
                 self.ref_manager.validate_refs(self.preset)
                 merged_bed = temp_path / "merged_regions.bed"
-                self.ref_manager.merge_preset_beds(self.preset, merged_bed)
+                self.ref_manager.merge_preset_beds(
+                    self.preset, merged_bed, splice_window=self.preset.splice_window
+                )
 
                 # Add chrM virtual region if keep_all_chrM is enabled
                 if self.preset.keep_all_chrM:
@@ -660,6 +768,7 @@ def prefilter_vcf(
     annotate: bool = False,
     regulatory_source: str = "fantom5",
     keep_all_chrM: bool = False,
+    interactive: bool = False,
 ) -> FilterResult:
     """Whole-genome VCF region prefiltering main entry point.
 
@@ -679,6 +788,7 @@ def prefilter_vcf(
         annotate: Enable DGRA_REGION/DGRA_SAFETYNET INFO annotation (slow).
         regulatory_source: Regulatory source for comprehensive preset.
         keep_all_chrM: Retain all chrM variants regardless of region.
+        interactive: If True, prompt user to select preset interactively.
 
     Returns:
         FilterResult containing output path and filter statistics.
@@ -690,6 +800,9 @@ def prefilter_vcf(
         BcftoolsNotFoundError: If bcftools is not installed.
         RefDataMissingError: If required reference data is missing.
     """
+    if interactive:
+        preset = _ask_preset(default=preset)
+
     config = PrefilterConfig(
         input_path=Path(input_path),
         output_path=Path(output_path),
