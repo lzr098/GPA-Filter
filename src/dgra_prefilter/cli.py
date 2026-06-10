@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from dgra_prefilter.constants import DEFAULT_REF_DIR, LOG_FORMAT
+from dgra_prefilter.constants import DEFAULT_REF_DIR, LOG_FORMAT, ErrorCode
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -46,7 +46,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-p", "--preset",
         default="comprehensive",
-        choices=["comprehensive", "coding-only", "regulatory-minimal"],
+        choices=["comprehensive", "coding-only", "regulatory-minimal", "regulatory-balanced"],
         help="Filter preset (default: comprehensive)",
     )
     parser.add_argument(
@@ -83,6 +83,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--regulatory-source",
+        default="fantom5",
+        choices=["fantom5", "ensembl", "both"],
+        help="Regulatory source for comprehensive preset (default: fantom5)",
+    )
+    parser.add_argument(
+        "--keep-all-chrM",
+        action="store_true",
+        default=False,
+        help="Retain all chrM variants regardless of region (default: false)",
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         default=False,
@@ -116,6 +128,8 @@ def _args_to_config(args: argparse.Namespace) -> dict:
         "force": args.force,
         "update_refs": args.update_refs,
         "annotate": args.annotate,
+        "regulatory_source": args.regulatory_source,
+        "keep_all_chrM": args.keep_all_chrM,
     }
 
 
@@ -162,25 +176,26 @@ def main() -> None:
         print(f"  Safety net-only: {stats.safetynet_only_variants:,}")
         print(f"  Both region and safety net: {stats.region_and_safetynet_variants:,}")
         print(f"  ClinVar safety net hits: {stats.clinvar_count:,}")
+        print(f"  OMIM safety net hits: {stats.omim_count:,}")
         print(f"  Elapsed: {stats.elapsed_seconds:.1f}s")
         print(f"  Output: {result.output_path}")
         print(f"  Report: {result.report_path}")
 
     except FileNotFoundError as exc:
         logger.error("File not found: %s", exc)
-        sys.exit(1)
+        sys.exit(ErrorCode.INPUT_FILE_NOT_FOUND)
     except GenomeMismatchError as exc:
         logger.error("Genome mismatch: %s", exc)
-        sys.exit(2)
+        sys.exit(ErrorCode.GENOME_MISMATCH)
     except BcftoolsNotFoundError as exc:
         logger.error("Dependency missing: %s", exc)
-        sys.exit(3)
+        sys.exit(ErrorCode.BCFTOOLS_NOT_FOUND)
     except RefDataMissingError as exc:
         logger.error("Reference data missing: %s", exc)
-        sys.exit(4)
+        sys.exit(ErrorCode.REF_FILE_MISSING)
     except VCFProcessingError as exc:
         logger.error("VCF processing error: %s", exc)
-        sys.exit(5)
+        sys.exit(ErrorCode.BCFTOOLS_EXECUTION_ERROR)
     except Exception as exc:
         logger.error("Unexpected error: %s", exc, exc_info=True)
         sys.exit(99)

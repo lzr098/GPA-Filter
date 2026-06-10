@@ -77,6 +77,56 @@ class BedUtils:
         return data
 
     @staticmethod
+    def load_bed_named(path: Path) -> dict[str, list[tuple[int, int, str]]]:
+        """Load a BED file preserving the 4th column as an interval name/tag.
+
+        Each chromosome maps to a sorted list of (start, end, name) tuples.
+        Automatically normalizes chromosome names to include 'chr' prefix.
+        Skips comment lines ('#') and track header lines.
+
+        Args:
+            path: Path to the BED file.
+
+        Returns:
+            Dictionary {chrom: [(start, end, name), ...]} with intervals sorted
+            by start coordinate. The name column is used for sub-tag annotation
+            (e.g., ClinVar star level, ENCODE cCRE type).
+
+        Raises:
+            FileNotFoundError: If the BED file does not exist.
+        """
+        if not path.exists():
+            raise FileNotFoundError(f"BED file not found: {path}")
+
+        data: dict[str, list[tuple[int, int, str]]] = {}
+        with open(path, "r") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or stripped.startswith("track"):
+                    continue
+                parts = stripped.split("\t")
+                if len(parts) < 4:
+                    # Need at least 4 columns for named intervals
+                    continue
+                chrom = BedUtils.normalize_chrom(parts[0])
+                try:
+                    start = int(parts[1])
+                    end = int(parts[2])
+                except ValueError:
+                    logger.warning("Skipping invalid BED line: %s", stripped)
+                    continue
+                name = parts[3]
+                if chrom not in data:
+                    data[chrom] = []
+                data[chrom].append((start, end, name))
+
+        # Sort intervals by start coordinate within each chromosome
+        for chrom in data:
+            data[chrom].sort(key=lambda x: x[0])
+
+        return data
+
+    @staticmethod
     def merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
         """Merge overlapping and adjacent intervals using a greedy algorithm.
 
@@ -182,6 +232,48 @@ class BedUtils:
             elif end <= bed_pos:
                 # Since intervals are sorted by start and non-overlapping after merge,
                 # once we find an interval that ends before our position, we can stop
+                break
+
+        return results
+
+    @staticmethod
+    def query_overlap_named(
+        bed_data: dict[str, list[tuple[int, int, str]]],
+        chrom: str,
+        pos: int,
+    ) -> list[tuple[int, int, str]]:
+        """Query whether a genomic position overlaps named BED intervals.
+
+        Uses bisect for O(log n) lookup. The position is treated as a VCF
+        1-based coordinate, converted to BED 0-based half-open for comparison.
+
+        Args:
+            bed_data: Dictionary {chrom: [(start, end, name), ...]} from
+                load_bed_named().
+            chrom: Chromosome name (will be normalized).
+            pos: 1-based VCF position.
+
+        Returns:
+            List of (start, end, name) tuples that contain the position.
+        """
+        chrom = BedUtils.normalize_chrom(chrom)
+        if chrom not in bed_data:
+            return []
+
+        intervals = bed_data[chrom]
+        if not intervals:
+            return []
+
+        bed_pos = pos - 1
+        starts = [iv[0] for iv in intervals]
+        idx = bisect.bisect_right(starts, bed_pos)
+
+        results: list[tuple[int, int, str]] = []
+        for i in range(idx - 1, -1, -1):
+            start, end, name = intervals[i]
+            if start <= bed_pos < end:
+                results.append((start, end, name))
+            elif end <= bed_pos:
                 break
 
         return results

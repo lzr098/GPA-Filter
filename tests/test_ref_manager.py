@@ -55,15 +55,15 @@ class TestValidateRefs:
         with pytest.raises(FileNotFoundError, match="Required reference file missing"):
             rm.validate_refs(preset)
 
-    def test_missing_safetynet_bed(self, tmp_path: Path) -> None:
-        """Safety net BED must exist even if empty."""
+    def test_missing_safetynet_bed_warns(self, tmp_path: Path) -> None:
+        """Missing safety net BED logs a warning but does not raise."""
         rm = RefManager(tmp_path)
         preset = get_preset("comprehensive")
-        # Create region BEDs but not ClinVar
+        # Create region BEDs but not ClinVar/OMIM
         for name in preset.get_region_bed_names():
             (tmp_path / name).write_text("chr1\t100\t200\n")
-        with pytest.raises(FileNotFoundError, match="Safety net file missing"):
-            rm.validate_refs(preset)
+        # Should not raise; warnings are logged
+        assert rm.validate_refs(preset) is True
 
 
 class TestMergePresetBeds:

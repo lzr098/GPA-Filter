@@ -101,6 +101,14 @@ class TestReportGenerator:
         assert data["regions"]["gene"] == 150
         assert data["regions"]["ncrna"] == 30
         assert data["regions"]["regulatory"] == 40
+        assert "gene_5utr" in data["regions"]
+        assert "gene_cds" in data["regions"]
+        assert "gene_3utr" in data["regions"]
+        assert "gene_splice" in data["regions"]
+        assert "regulatory_pls" in data["regions"]
+        assert "regulatory_pels" in data["regions"]
+        assert "regulatory_dels" in data["regions"]
+        assert "regulatory_ctcf" in data["regions"]
         assert data["regions"]["region_only"] == 200
         assert data["regions"]["safetynet_only"] == 30
         assert data["regions"]["region_and_safetynet"] == 20

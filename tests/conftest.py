@@ -112,6 +112,17 @@ def empty_vcf(tmp_path: Path) -> Path:
     return write_vcf(vcf_path, VCF_HEADER, [])
 
 
+def write_bed_named(
+    path: Path,
+    intervals: list[tuple[str, int, int, str]],
+) -> Path:
+    """Write a 4-column BED file from (chrom, start, end, name) tuples."""
+    with open(path, "w") as f:
+        for chrom, start, end, name in intervals:
+            f.write(f"{chrom}\t{start}\t{end}\t{name}\n")
+    return path
+
+
 @pytest.fixture()
 def mini_ref_dir(tmp_path: Path) -> Path:
     """Create a minimal reference directory with all BED files required by presets.
@@ -119,12 +130,17 @@ def mini_ref_dir(tmp_path: Path) -> Path:
     BED file layout (0-based half-open):
     - gencode_v44_gene_loci.bed: chr1 100-200, chr2 500-600
     - gencode_v44_coding_exon_utr.bed: chr1 100-180, chr2 500-580
+    - gencode_5utr.bed: chr1 100-120
+    - gencode_cds.bed: chr1 120-160
+    - gencode_3utr.bed: chr1 160-180
+    - gencode_splice_sites.bed: chr1 180-185
     - gencode_v44_ncrna_loci.bed: chr1 500-600
     - encode_screen_v3_ccres.bed: chr1 1000-1200
     - encode_screen_v3_pls_pels.bed: chr1 1000-1150
+    - encode_screen_v3_balanced.bed: chr1 1000-1200 with types
     - fantom5_enhancers_promoters.bed: chr1 1050-1100
     - vista_enhancers.bed: chr1 1100-1150
-    - clinvar_pathogenic_GRCh38.bed: chr1 100-150, chr1 2000-2100
+    - clinvar_pathogenic_GRCh38.bed: chr1 100-150 (3star), chr1 2000-2100 (1star)
     - omim_pathogenic_GRCh38.bed: (empty)
     """
     ref_dir = tmp_path / "refs"
@@ -138,6 +154,18 @@ def mini_ref_dir(tmp_path: Path) -> Path:
         ("chr1", 100, 180),
         ("chr2", 500, 580),
     ])
+    write_bed(ref_dir / "gencode_5utr.bed", [
+        ("chr1", 100, 120),
+    ])
+    write_bed(ref_dir / "gencode_cds.bed", [
+        ("chr1", 120, 160),
+    ])
+    write_bed(ref_dir / "gencode_3utr.bed", [
+        ("chr1", 160, 180),
+    ])
+    write_bed(ref_dir / "gencode_splice_sites.bed", [
+        ("chr1", 180, 185),
+    ])
     write_bed(ref_dir / "gencode_v44_ncrna_loci.bed", [
         ("chr1", 500, 600),
     ])
@@ -147,15 +175,28 @@ def mini_ref_dir(tmp_path: Path) -> Path:
     write_bed(ref_dir / "encode_screen_v3_pls_pels.bed", [
         ("chr1", 1000, 1150),
     ])
+    write_bed_named(ref_dir / "encode_screen_v3_balanced.bed", [
+        ("chr1", 1000, 1050, "PLS"),
+        ("chr1", 1050, 1100, "pELS"),
+        ("chr1", 1100, 1150, "dELS"),
+        ("chr1", 1150, 1200, "CTCF"),
+    ])
+    write_bed_named(ref_dir / "ensembl_regulatory_features.bed", [
+        ("chr1", 1200, 1300, "promoter"),
+        ("chr1", 1300, 1400, "enhancer"),
+        ("chr1", 1400, 1450, "ctcf"),
+        ("chr1", 1450, 1500, "open_chromatin"),
+        ("chr1", 1500, 1550, "tf_binding"),
+    ])
     write_bed(ref_dir / "fantom5_enhancers_promoters.bed", [
         ("chr1", 1050, 1100),
     ])
     write_bed(ref_dir / "vista_enhancers.bed", [
         ("chr1", 1100, 1150),
     ])
-    write_bed(ref_dir / "clinvar_pathogenic_GRCh38.bed", [
-        ("chr1", 100, 150),
-        ("chr1", 2000, 2100),
+    write_bed_named(ref_dir / "clinvar_pathogenic_GRCh38.bed", [
+        ("chr1", 100, 150, "3"),
+        ("chr1", 2000, 2100, "1"),
     ])
     # omim - empty file (just a header comment)
     (ref_dir / "omim_pathogenic_GRCh38.bed").write_text("# placeholder\n")

@@ -42,9 +42,9 @@ DIAGNOSE = PROJECT_ROOT / "scripts" / "diagnose_vcf.py"
 PREPROCESS = PROJECT_ROOT / "scripts" / "preprocess_vcf.py"
 REF_DIR = Path("~/.dgra-prefilter/refs").expanduser()
 
-# Use a temp directory for demo VCFs to avoid sandbox restrictions
-DEMO_VCFS_DIR = Path("/Users/zhaorongli/WorkBuddy/2026-06-03-15-52-48/demo_vcfs")
-TMP_DIR = Path("/Users/zhaorongli/WorkBuddy/2026-06-03-15-52-48/e2e_tmp")
+# Temp directories are created per-test-class to avoid sandbox restrictions.
+DEMO_VCFS_DIR: Path | None = None
+TMP_DIR: Path | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +121,20 @@ class TestE2EPipeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Generate demo VCFs once before all tests."""
+        global DEMO_VCFS_DIR, TMP_DIR
+        cls._demo_tmp = tempfile.TemporaryDirectory(prefix="dgra_e2e_demo_")
+        cls._run_tmp = tempfile.TemporaryDirectory(prefix="dgra_e2e_run_")
+        DEMO_VCFS_DIR = Path(cls._demo_tmp.name)
+        TMP_DIR = Path(cls._run_tmp.name)
         DEMO_VCFS_DIR.mkdir(parents=True, exist_ok=True)
         TMP_DIR.mkdir(parents=True, exist_ok=True)
         cls.demo_paths = generate_all_demo_vcfs(DEMO_VCFS_DIR, ref_dir=REF_DIR)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        """Clean up temporary directories."""
+        cls._demo_tmp.cleanup()
+        cls._run_tmp.cleanup()
 
     def setUp(self) -> None:
         """Clean temp files for each test."""

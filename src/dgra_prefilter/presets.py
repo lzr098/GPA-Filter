@@ -4,7 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dgra_prefilter.safetynet import ClinVarSafetyNet, SafetyNetProvider
+from dgra_prefilter.constants import (
+    ENCODE_BALANCED_BED,
+    ENCODE_CCRE_BED,
+    ENCODE_PLS_PELS_BED,
+    ENSEMBL_REGULATORY_BED,
+    FANTOM5_BED,
+    GENCODE_3UTR_BED,
+    GENCODE_5UTR_BED,
+    GENCODE_CDS_BED,
+    GENCODE_CODING_EXON_UTR_BED,
+    GENCODE_GENE_BED,
+    GENCODE_NCRNA_BED,
+    GENCODE_SPLICE_BED,
+    VISTA_BED,
+)
+from dgra_prefilter.safetynet import ClinVarSafetyNet, OMIMSafetyNet, SafetyNetProvider
 
 
 @dataclass(frozen=True)
@@ -16,10 +31,13 @@ class PresetConfig:
     ncrna: bool
     regulatory_encode: bool
     regulatory_encode_pls_pels_only: bool
+    regulatory_encode_balanced: bool
     regulatory_fantom5: bool
     regulatory_vista: bool
     safetynet_clinvar: bool
     safetynet_omim: bool
+    regulatory_source: str = "fantom5"
+    keep_all_chrM: bool = False
 
     def get_region_bed_names(self) -> list[str]:
         """Return the list of region BED filenames needed by this preset.
@@ -30,20 +48,33 @@ class PresetConfig:
         beds: list[str] = []
         if self.gene:
             if self.name == "coding-only":
-                beds.append("gencode_v44_coding_exon_utr.bed")
+                beds.extend([
+                    GENCODE_5UTR_BED,
+                    GENCODE_CDS_BED,
+                    GENCODE_3UTR_BED,
+                    GENCODE_SPLICE_BED,
+                ])
             else:
-                beds.append("gencode_v44_gene_loci.bed")
+                beds.append(GENCODE_GENE_BED)
         if self.ncrna:
-            beds.append("gencode_v44_ncrna_loci.bed")
+            beds.append(GENCODE_NCRNA_BED)
         if self.regulatory_encode:
-            if self.regulatory_encode_pls_pels_only:
-                beds.append("encode_screen_v3_pls_pels.bed")
+            if self.regulatory_encode_balanced:
+                beds.append(ENCODE_BALANCED_BED)
+            elif self.regulatory_encode_pls_pels_only:
+                beds.append(ENCODE_PLS_PELS_BED)
             else:
-                beds.append("encode_screen_v3_ccres.bed")
+                beds.append(ENCODE_CCRE_BED)
         if self.regulatory_fantom5:
-            beds.append("fantom5_enhancers_promoters.bed")
+            if self.regulatory_source == "fantom5":
+                beds.append(FANTOM5_BED)
+            elif self.regulatory_source == "ensembl":
+                beds.append(ENSEMBL_REGULATORY_BED)
+            elif self.regulatory_source == "both":
+                beds.append(FANTOM5_BED)
+                beds.append(ENSEMBL_REGULATORY_BED)
         if self.regulatory_vista:
-            beds.append("vista_enhancers.bed")
+            beds.append(VISTA_BED)
         return beds
 
     def get_safetynet_providers(self) -> list[SafetyNetProvider]:
@@ -55,7 +86,8 @@ class PresetConfig:
         providers: list[SafetyNetProvider] = []
         if self.safetynet_clinvar:
             providers.append(ClinVarSafetyNet())
-        # v2.0: if self.safetynet_omim: providers.append(OMIMSafetyNet())
+        if self.safetynet_omim:
+            providers.append(OMIMSafetyNet())
         return providers
 
 
@@ -66,10 +98,11 @@ PRESETS: dict[str, PresetConfig] = {
         ncrna=True,
         regulatory_encode=True,
         regulatory_encode_pls_pels_only=False,
+        regulatory_encode_balanced=False,
         regulatory_fantom5=True,
         regulatory_vista=True,
         safetynet_clinvar=True,
-        safetynet_omim=False,
+        safetynet_omim=True,
     ),
     "coding-only": PresetConfig(
         name="coding-only",
@@ -77,10 +110,11 @@ PRESETS: dict[str, PresetConfig] = {
         ncrna=False,
         regulatory_encode=False,
         regulatory_encode_pls_pels_only=False,
+        regulatory_encode_balanced=False,
         regulatory_fantom5=False,
         regulatory_vista=False,
         safetynet_clinvar=True,
-        safetynet_omim=False,
+        safetynet_omim=True,
     ),
     "regulatory-minimal": PresetConfig(
         name="regulatory-minimal",
@@ -88,10 +122,23 @@ PRESETS: dict[str, PresetConfig] = {
         ncrna=True,
         regulatory_encode=True,
         regulatory_encode_pls_pels_only=True,
+        regulatory_encode_balanced=False,
         regulatory_fantom5=False,
         regulatory_vista=False,
         safetynet_clinvar=True,
-        safetynet_omim=False,
+        safetynet_omim=True,
+    ),
+    "regulatory-balanced": PresetConfig(
+        name="regulatory-balanced",
+        gene=True,
+        ncrna=True,
+        regulatory_encode=True,
+        regulatory_encode_pls_pels_only=False,
+        regulatory_encode_balanced=True,
+        regulatory_fantom5=False,
+        regulatory_vista=False,
+        safetynet_clinvar=True,
+        safetynet_omim=True,
     ),
 }
 
@@ -100,7 +147,7 @@ def get_preset(name: str) -> PresetConfig:
     """Look up a preset by name.
 
     Args:
-        name: Preset name (comprehensive, coding-only, or regulatory-minimal).
+        name: Preset name (comprehensive, coding-only, regulatory-minimal, regulatory-balanced).
 
     Returns:
         The corresponding PresetConfig.

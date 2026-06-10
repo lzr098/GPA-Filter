@@ -7,6 +7,16 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dgra_prefilter.constants import (
+    REGION_TAG_GENE_3UTR,
+    REGION_TAG_GENE_5UTR,
+    REGION_TAG_GENE_CDS,
+    REGION_TAG_GENE_SPLICE,
+    REGION_TAG_REGULATORY_CTCF,
+    REGION_TAG_REGULATORY_DELS,
+    REGION_TAG_REGULATORY_PELS,
+    REGION_TAG_REGULATORY_PLS,
+)
 from dgra_prefilter.core import FilterStats, PrefilterConfig
 
 logger = logging.getLogger(__name__)
@@ -57,6 +67,14 @@ class ReportGenerator:
                 "gene": stats.region_counts.get("gene", 0),
                 "ncrna": stats.region_counts.get("ncrna", 0),
                 "regulatory": stats.region_counts.get("regulatory", 0),
+                REGION_TAG_GENE_5UTR: stats.region_counts.get(REGION_TAG_GENE_5UTR, 0),
+                REGION_TAG_GENE_CDS: stats.region_counts.get(REGION_TAG_GENE_CDS, 0),
+                REGION_TAG_GENE_3UTR: stats.region_counts.get(REGION_TAG_GENE_3UTR, 0),
+                REGION_TAG_GENE_SPLICE: stats.region_counts.get(REGION_TAG_GENE_SPLICE, 0),
+                REGION_TAG_REGULATORY_PLS: stats.region_counts.get(REGION_TAG_REGULATORY_PLS, 0),
+                REGION_TAG_REGULATORY_PELS: stats.region_counts.get(REGION_TAG_REGULATORY_PELS, 0),
+                REGION_TAG_REGULATORY_DELS: stats.region_counts.get(REGION_TAG_REGULATORY_DELS, 0),
+                REGION_TAG_REGULATORY_CTCF: stats.region_counts.get(REGION_TAG_REGULATORY_CTCF, 0),
                 "region_only": stats.region_only_variants,
                 "safetynet_only": stats.safetynet_only_variants,
                 "region_and_safetynet": stats.region_and_safetynet_variants,

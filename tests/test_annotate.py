@@ -4,6 +4,9 @@ Key areas:
   - DGRA_REGION / DGRA_SAFETYNET tag correctness
   - Coordinate boundary correctness (VCF 1-based → BED 0-based)
   - ClinVar zero-omission: every P/LP site must be tagged
+  - ClinVar star-level tags (ClinVar_1star, ClinVar_3star)
+  - UTR/CDS/splice sub-region tags
+  - regulatory-balanced sub-tags
   - Proper handling of existing INFO fields
   - Empty VCF / no-overlap cases
 """
@@ -92,6 +95,26 @@ class TestDetermineRegions:
         regions = ann._determine_regions("chr1", 108)
         assert "gene" in regions
 
+    def test_gene_sub_regions(self, mini_ref_dir: Path) -> None:
+        """Sub-region BEDs produce gene_5utr, gene_cds, gene_3utr, gene_splice."""
+        ann = VCFAnnotator()
+        ann.load_beds(get_preset("comprehensive"), mini_ref_dir)
+        assert "gene_5utr" in ann._determine_regions("chr1", 110)
+        assert "gene_cds" in ann._determine_regions("chr1", 130)
+        assert "gene_3utr" in ann._determine_regions("chr1", 170)
+        assert "gene_splice" in ann._determine_regions("chr1", 182)
+
+    def test_regulatory_balanced_sub_tags(self, mini_ref_dir: Path) -> None:
+        """regulatory-balanced preset emits regulatory_pls/pels/dels/ctcf."""
+        ann = VCFAnnotator()
+        ann.load_beds(get_preset("regulatory-balanced"), mini_ref_dir)
+        assert "regulatory_pls" in ann._determine_regions("chr1", 1020)
+        assert "regulatory_pels" in ann._determine_regions("chr1", 1070)
+        assert "regulatory_dels" in ann._determine_regions("chr1", 1120)
+        assert "regulatory_ctcf" in ann._determine_regions("chr1", 1170)
+        # Summary tag preserved
+        assert "regulatory" in ann._determine_regions("chr1", 1020)
+
 
 # ======================================================================
 # _determine_safetynets
@@ -101,18 +124,18 @@ class TestDetermineSafetynets:
     """Tests for VCFAnnotator._determine_safetynets()."""
 
     def test_clinvar_hit(self, mini_ref_dir: Path) -> None:
-        """VCF pos 108 (BED pos 107) is in ClinVar interval [100, 150)."""
+        """VCF pos 108 (BED pos 107) is in ClinVar interval [100, 150) 3-star."""
         ann = VCFAnnotator()
         ann.load_beds(get_preset("comprehensive"), mini_ref_dir)
         safetynets = ann._determine_safetynets("chr1", 108)
-        assert "ClinVar" in safetynets
+        assert "ClinVar_3star" in safetynets
 
     def test_clinvar_safetynet_only(self, mini_ref_dir: Path) -> None:
-        """VCF pos 2050 (BED pos 2049) is in ClinVar [2000, 2100) but not in gene."""
+        """VCF pos 2050 (BED pos 2049) is in ClinVar [2000, 2100) 1-star."""
         ann = VCFAnnotator()
         ann.load_beds(get_preset("comprehensive"), mini_ref_dir)
         safetynets = ann._determine_safetynets("chr1", 2050)
-        assert "ClinVar" in safetynets
+        assert "ClinVar_1star" in safetynets
 
     def test_no_safetynet(self, mini_ref_dir: Path) -> None:
         """VCF pos 9999 is not in any safetynet."""
@@ -140,17 +163,17 @@ class TestAnnotateRecord:
         result = annotator._annotate_record(record)
         assert "DGRA_REGION=gene" in result
 
-    def test_adds_safetynet_tag(self, annotator: VCFAnnotator) -> None:
+    def test_adds_safetynet_star_tag(self, annotator: VCFAnnotator) -> None:
         record = "chr1\t2050\t.\tT\tC\t30\tPASS\t."
         result = annotator._annotate_record(record)
-        assert "DGRA_SAFETYNET=ClinVar" in result
+        assert "DGRA_SAFETYNET=ClinVar_1star" in result
 
     def test_both_region_and_safetynet(self, annotator: VCFAnnotator) -> None:
-        """VCF pos 108 is in both gene and ClinVar."""
+        """VCF pos 108 is in both gene and ClinVar 3-star."""
         record = "chr1\t108\t.\tG\tC\t30\tPASS\t."
         result = annotator._annotate_record(record)
         assert "DGRA_REGION=gene" in result
-        assert "DGRA_SAFETYNET=ClinVar" in result
+        assert "DGRA_SAFETYNET=ClinVar_3star" in result
 
     def test_no_overlap_keeps_dot_info(self, annotator: VCFAnnotator) -> None:
         record = "chr1\t9999\t.\tA\tT\t30\tPASS\t."
@@ -177,7 +200,7 @@ class TestAnnotateRecord:
         # INFO should NOT start with ".;" — the dot must be replaced, not appended to
         assert not parts[7].startswith(".;")
         assert "DGRA_REGION=gene" in parts[7]
-        assert "DGRA_SAFETYNET=ClinVar" in parts[7]
+        assert "DGRA_SAFETYNET=ClinVar_3star" in parts[7]
 
     def test_fewer_than_8_columns_unchanged(self, annotator: VCFAnnotator) -> None:
         record = "chr1\t150\t.\tA\tG\t30\tPASS"
@@ -232,7 +255,7 @@ class TestAnnotateVcf:
         assert "DGRA_REGION=gene" in r150["info"]
 
         r2050 = [r for r in records if r["pos"] == 2050][0]
-        assert "DGRA_SAFETYNET=ClinVar" in r2050["info"]
+        assert "DGRA_SAFETYNET=ClinVar_1star" in r2050["info"]
 
         r9999 = [r for r in records if r["pos"] == 9999][0]
         assert "DGRA_REGION" not in r9999["info"]
@@ -246,12 +269,30 @@ class TestAnnotateVcf:
         stats = ann.annotate_vcf(tmp_vcf, output)
 
         records = _parse_vcf_records(output)
-        # ClinVar positions in mini_ref: 100-150, 2000-2100
+        # ClinVar positions in mini_ref: 100-150 (3-star), 2000-2100 (1-star)
         clinvar_variants = [r for r in records if r["pos"] in (108, 2050)]
         for r in clinvar_variants:
-            assert "DGRA_SAFETYNET=ClinVar" in r["info"], (
+            tags = _get_info_tags(r["info"]).get("DGRA_SAFETYNET", [])
+            assert any(t.startswith("ClinVar_") for t in tags), (
                 f"ClinVar site chr1:{r['pos']} not tagged! Zero-omission violation."
             )
+
+    def test_clinvar_star_tags(self, mini_ref_dir: Path, tmp_vcf: Path, tmp_path: Path) -> None:
+        """ClinVar annotations include star level (ClinVar_3star, ClinVar_1star)."""
+        ann = VCFAnnotator()
+        ann.load_beds(get_preset("comprehensive"), mini_ref_dir)
+        output = tmp_path / "star_check.vcf"
+        ann.annotate_vcf(tmp_vcf, output)
+
+        records = _parse_vcf_records(output)
+        r108 = [r for r in records if r["pos"] == 108][0]
+        r2050 = [r for r in records if r["pos"] == 2050][0]
+
+        assert "ClinVar_3star" in r108["info"]
+        assert "ClinVar_1star" in r2050["info"]
+        # Base ClinVar tag should not appear when star info is available
+        assert "DGRA_SAFETYNET=ClinVar;" not in r108["info"]
+        assert "DGRA_SAFETYNET=ClinVar\t" not in r108["info"]
 
     def test_info_header_lines_added(self, mini_ref_dir: Path, tmp_vcf: Path, tmp_path: Path) -> None:
         ann = VCFAnnotator()
@@ -284,6 +325,55 @@ class TestAnnotateVcf:
         assert stats.region_counts.get("gene", 0) > 0
         assert stats.clinvar_count > 0
 
+    def test_sub_region_counts(self, mini_ref_dir: Path, tmp_path: Path) -> None:
+        """Sub-region counts are tracked separately in annotation stats."""
+        from tests.conftest import VCF_HEADER, write_vcf
+
+        records = [
+            "chr1\t110\t.\tA\tG\t30\tPASS\tDP=10",
+            "chr1\t130\t.\tA\tG\t30\tPASS\tDP=10",
+            "chr1\t170\t.\tA\tG\t30\tPASS\tDP=10",
+            "chr1\t182\t.\tA\tG\t30\tPASS\tDP=10",
+        ]
+        vcf_path = tmp_path / "sub_regions.vcf"
+        write_vcf(vcf_path, VCF_HEADER, records)
+
+        ann = VCFAnnotator()
+        ann.load_beds(get_preset("coding-only"), mini_ref_dir)
+        output = tmp_path / "sub_annotated.vcf"
+        stats = ann.annotate_vcf(vcf_path, output)
+
+        assert stats.region_counts.get("gene_5utr", 0) == 1
+        assert stats.region_counts.get("gene_cds", 0) == 1
+        assert stats.region_counts.get("gene_3utr", 0) == 1
+        assert stats.region_counts.get("gene_splice", 0) == 1
+        # Summary gene count equals sum of sub-categories
+        assert stats.region_counts.get("gene", 0) == 4
+
+    def test_regulatory_balanced_annotation(self, mini_ref_dir: Path, tmp_path: Path) -> None:
+        """regulatory-balanced outputs regulatory_pls/pels/dels/ctcf tags."""
+        from tests.conftest import VCF_HEADER, write_vcf
+
+        records = [
+            "chr1\t1020\t.\tA\tG\t30\tPASS\tDP=10",
+            "chr1\t1070\t.\tA\tG\t30\tPASS\tDP=10",
+            "chr1\t1120\t.\tA\tG\t30\tPASS\tDP=10",
+            "chr1\t1170\t.\tA\tG\t30\tPASS\tDP=10",
+        ]
+        vcf_path = tmp_path / "balanced.vcf"
+        write_vcf(vcf_path, VCF_HEADER, records)
+
+        ann = VCFAnnotator()
+        ann.load_beds(get_preset("regulatory-balanced"), mini_ref_dir)
+        output = tmp_path / "balanced_annotated.vcf"
+        stats = ann.annotate_vcf(vcf_path, output)
+
+        assert stats.region_counts.get("regulatory_pls", 0) == 1
+        assert stats.region_counts.get("regulatory_pels", 0) == 1
+        assert stats.region_counts.get("regulatory_dels", 0) == 1
+        assert stats.region_counts.get("regulatory_ctcf", 0) == 1
+        assert stats.region_counts.get("regulatory", 0) == 4
+
 
 # ======================================================================
 # Load beds with different presets
@@ -292,10 +382,16 @@ class TestAnnotateVcf:
 class TestLoadBedsWithPresets:
     """Test that load_beds correctly loads different BED sets per preset."""
 
-    def test_coding_only_loads_coding_exon(self, mini_ref_dir: Path) -> None:
+    def test_coding_only_loads_sub_region_beds(self, mini_ref_dir: Path) -> None:
         ann = VCFAnnotator()
         ann.load_beds(get_preset("coding-only"), mini_ref_dir)
+        # Summary gene bed loaded for backward-compatible annotation
         assert "gene" in ann.region_beds
+        # Sub-region beds loaded
+        assert "gene_5utr" in ann.region_simple_sub_beds
+        assert "gene_cds" in ann.region_simple_sub_beds
+        assert "gene_3utr" in ann.region_simple_sub_beds
+        assert "gene_splice" in ann.region_simple_sub_beds
         assert "ncrna" not in ann.region_beds
         assert "regulatory" not in ann.region_beds
 
@@ -305,3 +401,46 @@ class TestLoadBedsWithPresets:
         assert "gene" in ann.region_beds
         assert "ncrna" in ann.region_beds
         assert "regulatory" in ann.region_beds
+
+    def test_regulatory_balanced_loads_balanced_bed(self, mini_ref_dir: Path) -> None:
+        ann = VCFAnnotator()
+        ann.load_beds(get_preset("regulatory-balanced"), mini_ref_dir)
+        assert "gene" in ann.region_beds
+        assert "ncrna" in ann.region_beds
+        assert "regulatory" in ann.region_beds
+        assert "regulatory" in ann.region_named_sub_beds
+
+
+# ======================================================================
+# Ensembl regulatory annotations
+# ======================================================================
+
+class TestEnsemblRegulatory:
+    """Tests for Ensembl Regulatory Build annotation."""
+
+    def test_ensembl_sub_tags(self, mini_ref_dir: Path) -> None:
+        """Ensembl regulatory_source emits promoter/enhancer/ctcf/open_chromatin/tf_binding."""
+        from dataclasses import replace
+
+        preset = replace(get_preset("comprehensive"), regulatory_source="ensembl")
+        ann = VCFAnnotator()
+        ann.load_beds(preset, mini_ref_dir)
+        assert "regulatory_promoter" in ann._determine_regions("chr1", 1250)
+        assert "regulatory_enhancer" in ann._determine_regions("chr1", 1350)
+        assert "regulatory_ctcf" in ann._determine_regions("chr1", 1425)
+        assert "regulatory_open_chromatin" in ann._determine_regions("chr1", 1475)
+        assert "regulatory_tf_binding" in ann._determine_regions("chr1", 1525)
+        # Summary tag preserved
+        assert "regulatory" in ann._determine_regions("chr1", 1250)
+
+    def test_both_regulatory_sources(self, mini_ref_dir: Path) -> None:
+        """regulatory_source='both' loads both FANTOM5 and Ensembl."""
+        from dataclasses import replace
+
+        preset = replace(get_preset("comprehensive"), regulatory_source="both")
+        ann = VCFAnnotator()
+        ann.load_beds(preset, mini_ref_dir)
+        # FANTOM5 interval at 1050-1100
+        assert "regulatory" in ann._determine_regions("chr1", 1075)
+        # Ensembl interval at 1200-1300
+        assert "regulatory_promoter" in ann._determine_regions("chr1", 1250)

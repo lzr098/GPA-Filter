@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dgra_prefilter.safetynet import ClinVarSafetyNet, SafetyNetProvider
+from dgra_prefilter.safetynet import ClinVarSafetyNet, OMIMSafetyNet, SafetyNetProvider
 
 
 # ======================================================================
@@ -55,6 +55,10 @@ class TestClinVarSafetyNet:
         sn = ClinVarSafetyNet()
         assert sn.get_tag() == "ClinVar"
 
+    def test_format_tag(self) -> None:
+        assert ClinVarSafetyNet.format_tag("3") == "ClinVar_3star"
+        assert ClinVarSafetyNet.format_tag("1") == "ClinVar_1star"
+
     def test_get_bed_path(self, tmp_path: Path) -> None:
         sn = ClinVarSafetyNet()
         assert sn.get_bed_path(tmp_path) == tmp_path / "clinvar_pathogenic_GRCh38.bed"
@@ -88,3 +92,38 @@ class TestClinVarSafetyNet:
         bed_path = tmp_path / "clinvar_pathogenic_GRCh38.bed"
         bed_path.write_text("# header\nchr1\t100\t200\n")
         assert sn.is_available(tmp_path) is True
+
+
+# ======================================================================
+# OMIMSafetyNet
+# ======================================================================
+
+class TestOMIMSafetyNet:
+    """Tests for OMIMSafetyNet."""
+
+    def test_get_tag(self) -> None:
+        sn = OMIMSafetyNet()
+        assert sn.get_tag() == "OMIM"
+
+    def test_get_bed_path(self, tmp_path: Path) -> None:
+        sn = OMIMSafetyNet()
+        assert sn.get_bed_path(tmp_path) == tmp_path / "omim_pathogenic_GRCh38.bed"
+
+    def test_bed_filename_constant(self) -> None:
+        assert OMIMSafetyNet.BED_FILENAME == "omim_pathogenic_GRCh38.bed"
+
+    def test_is_available_missing_file(self, tmp_path: Path) -> None:
+        sn = OMIMSafetyNet()
+        assert sn.is_available(tmp_path) is False
+
+    def test_is_available_with_data(self, tmp_path: Path) -> None:
+        sn = OMIMSafetyNet()
+        bed_path = tmp_path / "omim_pathogenic_GRCh38.bed"
+        bed_path.write_text("chr1\t100\t200\n")
+        assert sn.is_available(tmp_path) is True
+
+    def test_is_available_empty_file(self, tmp_path: Path) -> None:
+        sn = OMIMSafetyNet()
+        bed_path = tmp_path / "omim_pathogenic_GRCh38.bed"
+        bed_path.write_text("")
+        assert sn.is_available(tmp_path) is False

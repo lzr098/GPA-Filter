@@ -34,21 +34,24 @@ description: |
 |------|------|------|--------|------|
 | input | string | 是 | — | 输入 VCF/VCF.gz/BCF 文件路径 |
 | output | string | 否 | 自动生成 | 输出文件路径（.vcf.gz 自动压缩） |
-| preset | string | 否 | comprehensive | 预设配置：comprehensive / coding-only / regulatory-minimal |
+| preset | string | 否 | comprehensive | 预设配置：comprehensive / coding-only / regulatory-minimal / regulatory-balanced |
 | genome | string | 否 | GRCh38 | 基因组版本（仅支持 GRCh38） |
 | ref_dir | string | 否 | ~/.dgra-prefilter/refs | 参考 BED 文件目录 |
 | report | string | 否 | 与 output 同目录 | JSON 报告输出路径 |
 | force | boolean | 否 | false | 跳过基因组版本校验 |
 | update_refs | boolean | 否 | false | 触发参考数据更新 |
 | annotate | boolean | 否 | false | 启用 DGRA_REGION/DGRA_SAFETYNET INFO 标注（较慢） |
+| regulatory_source | string | 否 | fantom5 | 调控数据来源：fantom5 / ensembl / both |
+| keep_all_chrM | boolean | 否 | false | 保留所有 chrM 变异 |
 
 ### Preset 说明
 
 | Preset | 基因区 | ncRNA | 调控元件 | 安全网 |
 |--------|--------|-------|----------|--------|
-| comprehensive | 全转录本 | 全部 | ENCODE + FANTOM5 + Vista | ClinVar |
-| coding-only | 仅外显子+UTR | 无 | 无 | ClinVar |
-| regulatory-minimal | 全转录本 | 全部 | 仅 ENCODE PLS/pELS | ClinVar |
+| comprehensive | 全转录本 | 全部 | ENCODE + FANTOM5 + Vista | ClinVar + OMIM |
+| coding-only | 仅外显子+UTR | 无 | 无 | ClinVar + OMIM |
+| regulatory-minimal | 全转录本 | 全部 | 仅 ENCODE PLS/pELS | ClinVar + OMIM |
+| regulatory-balanced | 全转录本 | 全部 | ENCODE PLS/pELS/dELS/CTCF | ClinVar + OMIM |
 
 ## Output
 
@@ -100,8 +103,17 @@ Requires: Python >= 3.9, bcftools >= 1.17
 用户：「用最小调控区域过滤这个 VCF」
 → dgra-prefilter --input /path/to/sample.vcf.gz --preset regulatory-minimal
 
+用户：「用平衡调控区域过滤这个 VCF」
+→ dgra-prefilter --input /path/to/sample.vcf.gz --preset regulatory-balanced
+
 用户：「过滤后还要标注每个变异落在哪个区域」
 → dgra-prefilter --input /path/to/sample.vcf.gz --preset comprehensive --annotate
+
+用户：「使用 Ensembl 调控数据过滤」
+→ dgra-prefilter --input /path/to/sample.vcf.gz --preset comprehensive --regulatory-source ensembl
+
+用户：「保留所有 chrM 变异」
+→ dgra-prefilter --input /path/to/sample.vcf.gz --preset comprehensive --keep-all-chrM
 
 用户：「帮我更新参考数据」
 → dgra-prefilter --update-refs

@@ -39,6 +39,24 @@ class TestPrefilterConfig:
         assert config.preset_name == "comprehensive"
         assert config.force is False
         assert config.update_refs is False
+        assert config.regulatory_source == "fantom5"
+        assert config.keep_all_chrM is False
+
+    def test_custom_regulatory_source(self, tmp_path: Path) -> None:
+        config = PrefilterConfig(
+            input_path=tmp_path / "input.vcf",
+            output_path=tmp_path / "output.vcf",
+            regulatory_source="ensembl",
+        )
+        assert config.regulatory_source == "ensembl"
+
+    def test_keep_all_chrM(self, tmp_path: Path) -> None:
+        config = PrefilterConfig(
+            input_path=tmp_path / "input.vcf",
+            output_path=tmp_path / "output.vcf",
+            keep_all_chrM=True,
+        )
+        assert config.keep_all_chrM is True
 
     def test_path_normalization(self, tmp_path: Path) -> None:
         config = PrefilterConfig(
@@ -164,3 +182,21 @@ class TestFilterEngineValidation:
         engine = FilterEngine(config)
         with pytest.raises(FileNotFoundError, match="Input VCF not found"):
             engine._validate_input()
+
+    def test_regulatory_source_override(self, tmp_path: Path) -> None:
+        config = PrefilterConfig(
+            input_path=tmp_path / "input.vcf",
+            output_path=tmp_path / "output.vcf",
+            regulatory_source="ensembl",
+        )
+        engine = FilterEngine(config)
+        assert engine.preset.regulatory_source == "ensembl"
+
+    def test_keep_all_chrM_override(self, tmp_path: Path) -> None:
+        config = PrefilterConfig(
+            input_path=tmp_path / "input.vcf",
+            output_path=tmp_path / "output.vcf",
+            keep_all_chrM=True,
+        )
+        engine = FilterEngine(config)
+        assert engine.preset.keep_all_chrM is True

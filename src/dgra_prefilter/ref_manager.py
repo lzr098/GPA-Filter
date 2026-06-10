@@ -56,12 +56,14 @@ class RefManager:
         # Check safety net BED files
         for provider in preset.get_safetynet_providers():
             bed_path = provider.get_bed_path(self.ref_dir)
-            # Safety net files may legitimately be empty (e.g., OMIM in v1.0),
-            # but they must at least exist
+            # Safety net files may legitimately be empty (e.g., OMIM),
+            # but they must at least exist. Missing safety nets are warned
+            # about rather than failing hard so the pipeline can still run.
             if not bed_path.exists():
-                raise FileNotFoundError(
-                    f"Safety net file missing: {bed_path}. "
-                    f"Run 'dgra-prefilter --update-refs' to download."
+                logger.warning(
+                    "Safety net file missing: %s. Skipping %s safety net.",
+                    bed_path,
+                    provider.get_tag(),
                 )
 
         return True

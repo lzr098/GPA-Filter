@@ -7,7 +7,7 @@ import logging
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from dgra_prefilter.bed_utils import BedUtils
@@ -80,6 +80,8 @@ class PrefilterConfig:
     force: bool = False
     update_refs: bool = False
     annotate: bool = False
+    regulatory_source: str = "fantom5"
+    keep_all_chrM: bool = False
 
     def __post_init__(self) -> None:
         """Normalize paths after initialization."""
@@ -154,7 +156,14 @@ class FilterEngine:
             config: Prefilter configuration.
         """
         self.config = config
-        self.preset = get_preset(config.preset_name)
+        base_preset = get_preset(config.preset_name)
+        # Apply runtime overrides from config to preset
+        preset_kwargs: dict[str, object] = {}
+        if config.regulatory_source != "fantom5":
+            preset_kwargs["regulatory_source"] = config.regulatory_source
+        if config.keep_all_chrM:
+            preset_kwargs["keep_all_chrM"] = True
+        self.preset = replace(base_preset, **preset_kwargs) if preset_kwargs else base_preset
         self.ref_manager = RefManager(config.ref_dir)
         self.stats = FilterStats()
         self._temp_dir: tempfile.TemporaryDirectory | None = None
@@ -204,6 +213,12 @@ class FilterEngine:
                 self.ref_manager.validate_refs(self.preset)
                 merged_bed = temp_path / "merged_regions.bed"
                 self.ref_manager.merge_preset_beds(self.preset, merged_bed)
+
+                # Add chrM virtual region if keep_all_chrM is enabled
+                if self.preset.keep_all_chrM:
+                    with open(merged_bed, "a") as f:
+                        f.write("chrM\t0\t16569\n")
+                    logger.info("Added chrM virtual region to merged BED")
 
                 # Count input variants
                 self.stats.input_variants = self._count_variants(self.config.input_path)
@@ -309,10 +324,15 @@ class FilterEngine:
                 "regulatory_encode_pls_pels_only": str(
                     self.preset.regulatory_encode_pls_pels_only
                 ),
+                "regulatory_encode_balanced": str(
+                    self.preset.regulatory_encode_balanced
+                ),
                 "regulatory_fantom5": str(self.preset.regulatory_fantom5),
                 "regulatory_vista": str(self.preset.regulatory_vista),
                 "safetynet_clinvar": str(self.preset.safetynet_clinvar),
                 "safetynet_omim": str(self.preset.safetynet_omim),
+                "regulatory_source": self.preset.regulatory_source,
+                "keep_all_chrM": str(self.preset.keep_all_chrM),
             }
 
             # =====================================================================
@@ -634,6 +654,8 @@ def prefilter_vcf(
     force: bool = False,
     update_refs: bool = False,
     annotate: bool = False,
+    regulatory_source: str = "fantom5",
+    keep_all_chrM: bool = False,
 ) -> FilterResult:
     """Whole-genome VCF region prefiltering main entry point.
 
@@ -651,6 +673,8 @@ def prefilter_vcf(
         force: Skip genome version validation.
         update_refs: Trigger reference data update before filtering.
         annotate: Enable DGRA_REGION/DGRA_SAFETYNET INFO annotation (slow).
+        regulatory_source: Regulatory source for comprehensive preset.
+        keep_all_chrM: Retain all chrM variants regardless of region.
 
     Returns:
         FilterResult containing output path and filter statistics.
@@ -672,6 +696,8 @@ def prefilter_vcf(
         force=force,
         update_refs=update_refs,
         annotate=annotate,
+        regulatory_source=regulatory_source,
+        keep_all_chrM=keep_all_chrM,
     )
 
     # Handle reference data update if requested
@@ -743,11 +769,16 @@ def annotate_vcf_file(
         "gene": str(preset_cfg.gene),
         "ncrna": str(preset_cfg.ncrna),
         "regulatory_encode": str(preset_cfg.regulatory_encode),
-        "regulatory_encode_pls_pels_only": str(preset_cfg.regulatory_encode_pls_pels_only),
+        "regulatory_encode_pls_pels_only": str(
+            preset_cfg.regulatory_encode_pls_pels_only
+        ),
+        "regulatory_encode_balanced": str(preset_cfg.regulatory_encode_balanced),
         "regulatory_fantom5": str(preset_cfg.regulatory_fantom5),
         "regulatory_vista": str(preset_cfg.regulatory_vista),
         "safetynet_clinvar": str(preset_cfg.safetynet_clinvar),
         "safetynet_omim": str(preset_cfg.safetynet_omim),
+        "regulatory_source": preset_cfg.regulatory_source,
+        "keep_all_chrM": str(preset_cfg.keep_all_chrM),
     }
 
     # Generate report

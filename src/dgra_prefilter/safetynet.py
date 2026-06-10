@@ -11,8 +11,6 @@ class SafetyNetProvider(ABC):
 
     A safety net ensures that known pathogenic variants are never filtered out,
     even if they fall outside the retained genomic regions.
-
-    v1.0 implements ClinVar only; v2.0 will add OMIM.
     """
 
     @abstractmethod
@@ -56,7 +54,10 @@ class ClinVarSafetyNet(SafetyNetProvider):
 
     Extracts variant coordinates from ClinVar where CLNSIG contains
     'Pathogenic' or 'Likely_pathogenic' (including combined states
-    like 'Pathogenic/Likely_pathogenic').
+    like 'Pathogenic/Likely_pathogenic'). The BED file is expected to
+    have a 4th column containing the ClinVar review-status star level
+    (1-4) so annotations can emit star-specific tags (ClinVar_1star,
+    ClinVar_2star, etc.). Zero-star records are filtered at build time.
     """
 
     BED_FILENAME = "clinvar_pathogenic_GRCh38.bed"
@@ -73,12 +74,28 @@ class ClinVarSafetyNet(SafetyNetProvider):
         return ref_dir / self.BED_FILENAME
 
     def get_tag(self) -> str:
-        """Return 'ClinVar' as the safety net tag.
+        """Return the base safety net tag.
+
+        The per-variant annotation uses the star level from the BED's
+        4th column via format_tag(). This method returns the provider
+        identity tag used for logging and filenames.
 
         Returns:
             The string 'ClinVar'.
         """
         return "ClinVar"
+
+    @staticmethod
+    def format_tag(star_level: str) -> str:
+        """Format a ClinVar tag including the star level.
+
+        Args:
+            star_level: Star level as a string (e.g., '1', '2', '3', '4').
+
+        Returns:
+            Tag string such as 'ClinVar_3star'.
+        """
+        return f"ClinVar_{star_level}star"
 
     def is_available(self, ref_dir: Path) -> bool:
         """Check whether ClinVar safety net data is available.
@@ -104,28 +121,37 @@ class ClinVarSafetyNet(SafetyNetProvider):
             return False
 
 
-# v2.0 implementation placeholder:
-# class OMIMSafetyNet(SafetyNetProvider):
-#     """OMIM pathogenic variants safety net (v2.0)."""
-#
-#     BED_FILENAME = "omim_pathogenic_GRCh38.bed"
-#
-#     def get_bed_path(self, ref_dir: Path) -> Path:
-#         return ref_dir / self.BED_FILENAME
-#
-#     def get_tag(self) -> str:
-#         return "OMIM"
-#
-#     def is_available(self, ref_dir: Path) -> bool:
-#         path = self.get_bed_path(ref_dir)
-#         if not path.exists():
-#             return False
-#         try:
-#             with open(path, "r") as f:
-#                 for line in f:
-#                     stripped = line.strip()
-#                     if stripped and not stripped.startswith("track") and not stripped.startswith("#"):
-#                         return True
-#             return False
-#         except OSError:
-#             return False
+class OMIMSafetyNet(SafetyNetProvider):
+    """OMIM pathogenic variants safety net."""
+
+    BED_FILENAME = "omim_pathogenic_GRCh38.bed"
+
+    def get_bed_path(self, ref_dir: Path) -> Path:
+        """Return the OMIM pathogenic variants BED file path."""
+        return ref_dir / self.BED_FILENAME
+
+    def get_tag(self) -> str:
+        """Return the OMIM safety net tag."""
+        return "OMIM"
+
+    def is_available(self, ref_dir: Path) -> bool:
+        """Check whether OMIM safety net data is available.
+
+        Args:
+            ref_dir: Directory containing reference BED files.
+
+        Returns:
+            True if omim_pathogenic_GRCh38.bed exists and is non-empty.
+        """
+        path = self.get_bed_path(ref_dir)
+        if not path.exists():
+            return False
+        try:
+            with open(path, "r") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("track") and not stripped.startswith("#"):
+                        return True
+            return False
+        except OSError:
+            return False

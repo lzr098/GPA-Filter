@@ -43,6 +43,8 @@ class TestBuildParser:
             "--report", "report.json",
             "--force",
             "--update-refs",
+            "--regulatory-source", "ensembl",
+            "--keep-all-chrM",
             "-v",
         ])
         assert args.genome == "GRCh38"
@@ -51,6 +53,8 @@ class TestBuildParser:
         assert args.report == Path("report.json")
         assert args.force is True
         assert args.update_refs is True
+        assert args.regulatory_source == "ensembl"
+        assert args.keep_all_chrM is True
         assert args.verbose is True
 
     def test_default_preset(self) -> None:
@@ -72,6 +76,14 @@ class TestBuildParser:
         parser = _build_parser()
         args = parser.parse_args(["-i", "in.vcf", "-o", "out.vcf"])
         assert args.verbose is False
+
+    def test_regulatory_balanced_preset_choice(self) -> None:
+        parser = _build_parser()
+        args = parser.parse_args([
+            "-i", "in.vcf", "-o", "out.vcf",
+            "-p", "regulatory-balanced",
+        ])
+        assert args.preset == "regulatory-balanced"
 
     def test_invalid_preset_exits(self) -> None:
         parser = _build_parser()
@@ -104,6 +116,7 @@ class TestArgsToConfig:
             "-o", "output.vcf",
             "-p", "coding-only",
             "--force",
+            "--keep-all-chrM",
         ])
         config_dict = _args_to_config(args)
 
@@ -113,6 +126,8 @@ class TestArgsToConfig:
         assert config_dict["force"] is True
         assert config_dict["update_refs"] is False
         assert config_dict["genome"] == "GRCh38"
+        assert config_dict["regulatory_source"] == "fantom5"
+        assert config_dict["keep_all_chrM"] is True
 
     def test_report_none_by_default(self) -> None:
         parser = _build_parser()
