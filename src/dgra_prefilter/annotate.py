@@ -339,7 +339,7 @@ class VCFAnnotator:
         self,
         lines: list[str],
         chrom: str,
-    ) -> tuple[list[str], dict[str, int], dict[str, int], int, int, int]:
+    ) -> tuple[list[str], dict[str, int], int, int, int, int, int]:
         """Annotate all variants for a single chromosome in one batch.
 
         Uses two-pointer sweep for O(n + m) performance per BED.

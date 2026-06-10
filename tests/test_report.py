@@ -74,7 +74,7 @@ class TestReportGenerator:
         data = json.loads(output.read_text())
 
         assert data["tool"] == "dgra-prefilter"
-        assert data["version"] == "1.0.0"
+        assert data["version"] == "1.1.0"
 
     def test_input_section(self, stats: FilterStats, config: PrefilterConfig, tmp_path: Path) -> None:
         output = tmp_path / "report.json"

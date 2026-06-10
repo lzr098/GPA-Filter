@@ -191,10 +191,11 @@ class TestPresetFieldCorrectness:
         assert p.regulatory_source == "fantom5"
         assert p.keep_all_chrM is False
 
-    def test_four_presets_exist(self) -> None:
-        assert len(PRESETS) == 4
+    def test_five_presets_exist(self) -> None:
+        assert len(PRESETS) == 5
         assert set(PRESETS.keys()) == {
             "comprehensive",
+            "comprehensive-splice100",
             "coding-only",
             "regulatory-minimal",
             "regulatory-balanced",

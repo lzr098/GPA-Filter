@@ -50,7 +50,9 @@
 | 🧬 **三层数据过滤** | GENCODE 基因座 + ncRNA + ENCODE 调控元件 |
 | 🛡️ **ClinVar 安全网** | 保留所有 ClinVar 致病/可能致病变异（P/LP），即使落在基因区外 |
 | ⚡ **bcftools 硬过滤** | 基于坐标交集，无实时 API 调用，速度极快 |
-| 📦 **三种预设策略** | comprehensive / coding-only / regulatory-minimal |
+| 📦 **五种预设策略** | comprehensive / comprehensive-splice100 / coding-only / regulatory-minimal / regulatory-balanced |
+| 🎛️ **交互式预设选择** | 运行时通过菜单选择过滤策略 (`-I` / `--interactive`) |
+| 🔧 **macOS 引号兼容** | 自动处理拖入文件路径中的 Unicode/ASCII 引号差异 |
 | 🏷️ **可选 INFO 标注** | DGRA_REGION / DGRA_SAFETYNET VCF 标签 |
 | 🔄 **参考数据可更新** | 支持手动更新 GENCODE / ENCODE / ClinVar 数据 |
 | 🎯 **零 Python 依赖** | 仅依赖系统 bcftools，无外部 Python 包 |
@@ -214,6 +216,18 @@ dgra-prefilter \
   --output filtered.vcf.gz \
   --preset comprehensive
 
+# 交互式选择预设（推荐）
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output filtered.vcf.gz \
+  --interactive
+
+# Exon/UTR + 100bp 剪接区（去除深度内含子）
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output filtered.vcf.gz \
+  --preset comprehensive-splice100
+
 # 仅保留编码区（最精简）
 dgra-prefilter \
   --input sample.vcf.gz \
@@ -249,12 +263,15 @@ dgra-prefilter \
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `-p, --preset` | 预设策略：`comprehensive` / `coding-only` / `regulatory-minimal` | `comprehensive` |
+| `-p, --preset` | 预设策略：`comprehensive` / `comprehensive-splice100` / `coding-only` / `regulatory-minimal` / `regulatory-balanced` | `comprehensive` |
+| `-I, --interactive` | 交互式选择预设（运行前弹出菜单） | 否 |
 | `-g, --genome` | 基因组版本（仅 GRCh38） | `GRCh38` |
 | `--ref-dir PATH` | 参考 BED 文件目录 | `~/.dgra-prefilter/refs` |
 | `--report PATH` | JSON 报告输出路径 | 与 output 同目录 |
 | `--annotate` | 启用 DGRA_REGION / DGRA_SAFETYNET 标注 | 否 |
 | `--update-refs` | 过滤前更新参考数据 | 否 |
+| `--regulatory-source` | 调控数据来源：`fantom5` / `ensembl` / `both` | `fantom5` |
+| `--keep-all-chrM` | 保留所有 chrM 变异（无视区域） | 否 |
 | `--force` | 跳过基因组版本校验 | 否 |
 | `-v, --verbose` | 启用 DEBUG 级别日志 | 否 |
 | `--version` | 显示版本号 | — |
@@ -302,12 +319,26 @@ print(f"保留率: {result.stats.retention_rate:.1%}")
 print(f"输出: {result.output_path}")
 print(f"报告: {result.report_path}")
 
+# 交互式选择预设
+result = prefilter_vcf(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    interactive=True,
+)
+
 # 过滤 + 标注
 result = prefilter_vcf(
     input_path="sample.vcf.gz",
     output_path="annotated.vcf.gz",
     preset="comprehensive",
     annotate=True,
+)
+
+# 使用 splice100 预设（去除深度内含子）
+result = prefilter_vcf(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    preset="comprehensive-splice100",
 )
 
 # 使用 PrefilterConfig（类型安全）
@@ -349,17 +380,21 @@ except VCFProcessingError as e:
 
 ### Preset 说明
 
-| Preset | 基因区 | ncRNA | 调控元件 | ClinVar 安全网 |
-|--------|--------|-------|----------|----------------|
-| **comprehensive** | 全转录本（外显子+内含子+UTR） | 全部 | ENCODE cCRE + FANTOM5 + Vista | P/LP |
-| **coding-only** | 仅外显子+UTR | 无 | 无 | P/LP |
-| **regulatory-minimal** | 全转录本 | 全部 | 仅 ENCODE PLS/pELS | P/LP |
+| Preset | 基因区 | ncRNA | 调控元件 | ClinVar 安全网 | 保留率* |
+|--------|--------|-------|----------|----------------|--------|
+| **comprehensive** | 全转录本（外显子+内含子+UTR） | 全部 | ENCODE cCRE + FANTOM5 + Vista | P/LP | ~50-60% |
+| **comprehensive-splice100** | Exon/UTR + 100bp 剪接区 | 全部 | ENCODE cCRE + FANTOM5 + Vista | P/LP | ~25-30% |
+| **coding-only** | 仅外显子+UTR | 无 | 无 | P/LP | ~1-3% |
+| **regulatory-minimal** | 全转录本 | 全部 | 仅 ENCODE PLS/pELS | P/LP | ~10-20% |
+| **regulatory-balanced** | 全转录本 | 全部 | ENCODE 平衡子集 | P/LP | ~15-25% |
 
 - **comprehensive**：最大敏感度，适合发现研究或敏感度优先的场景
+- **comprehensive-splice100**：去除深度内含子，保留剪接位点附近区域，平衡敏感度与精简度
 - **coding-only**：最小区域集，仅蛋白编码外显子和 UTR，适合聚焦临床流程
 - **regulatory-minimal**：平衡基因覆盖与关键调控元件，跳过远端增强子
+- **regulatory-balanced**：更均衡的调控元件覆盖策略
 
-> 📊 典型的全基因组 VCF（~300 万变异）使用 comprehensive preset 后保留约 **~3%** 变异。
+> *保留率基于全基因组 VCF（~500 万变异）估算，实际值因样本而异。
 
 ---
 
@@ -513,7 +548,9 @@ pytest -v
 | 🧬 **Three-layer filtering** | GENCODE loci + ncRNA + ENCODE regulatory elements |
 | 🛡️ **ClinVar safety net** | Retains all ClinVar pathogenic/likely pathogenic (P/LP) variants, even outside gene loci |
 | ⚡ **bcftools hard filter** | Coordinate-based intersection, no live API calls, extremely fast |
-| 📦 **Three preset strategies** | comprehensive / coding-only / regulatory-minimal |
+| 📦 **Five preset strategies** | comprehensive / comprehensive-splice100 / coding-only / regulatory-minimal / regulatory-balanced |
+| 🎛️ **Interactive preset selection** | Choose filter strategy via runtime menu (`-I` / `--interactive`) |
+| 🔧 **macOS quote compatibility** | Auto-handles Unicode/ASCII quotation mark differences in dragged file paths |
 | 🏷️ **Optional INFO annotation** | DGRA_REGION / DGRA_SAFETYNET VCF tags |
 | 🔄 **Updatable references** | Manual update of GENCODE / ENCODE / ClinVar data supported |
 | 🎯 **Zero Python deps** | Only requires system bcftools, no external Python packages |
@@ -677,6 +714,18 @@ dgra-prefilter \
   --output filtered.vcf.gz \
   --preset comprehensive
 
+# Interactive preset selection (recommended)
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output filtered.vcf.gz \
+  --interactive
+
+# Exon/UTR + 100bp splice window (removes deep intronic)
+dgra-prefilter \
+  --input sample.vcf.gz \
+  --output filtered.vcf.gz \
+  --preset comprehensive-splice100
+
 # Keep coding regions only (most compact)
 dgra-prefilter \
   --input sample.vcf.gz \
@@ -712,12 +761,15 @@ dgra-prefilter \
 
 | Argument | Description | Default |
 |----------|-------------|---------|
-| `-p, --preset` | Preset: `comprehensive` / `coding-only` / `regulatory-minimal` | `comprehensive` |
+| `-p, --preset` | Preset: `comprehensive` / `comprehensive-splice100` / `coding-only` / `regulatory-minimal` / `regulatory-balanced` | `comprehensive` |
+| `-I, --interactive` | Interactive preset selection (menu before filtering) | No |
 | `-g, --genome` | Genome version (GRCh38 only) | `GRCh38` |
 | `--ref-dir PATH` | Reference BED files directory | `~/.dgra-prefilter/refs` |
 | `--report PATH` | JSON report output path | Same dir as output |
 | `--annotate` | Enable DGRA_REGION / DGRA_SAFETYNET tags | No |
 | `--update-refs` | Update reference data before filtering | No |
+| `--regulatory-source` | Regulatory source: `fantom5` / `ensembl` / `both` | `fantom5` |
+| `--keep-all-chrM` | Retain all chrM variants regardless of region | No |
 | `--force` | Skip genome version validation | No |
 | `-v, --verbose` | Enable DEBUG logging | No |
 | `--version` | Show version | — |
@@ -765,12 +817,26 @@ print(f"Retention: {result.stats.retention_rate:.1%}")
 print(f"Output: {result.output_path}")
 print(f"Report: {result.report_path}")
 
+# Interactive preset selection
+result = prefilter_vcf(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    interactive=True,
+)
+
 # Filter + annotate
 result = prefilter_vcf(
     input_path="sample.vcf.gz",
     output_path="annotated.vcf.gz",
     preset="comprehensive",
     annotate=True,
+)
+
+# Use splice100 preset (removes deep intronic)
+result = prefilter_vcf(
+    input_path="sample.vcf.gz",
+    output_path="filtered.vcf.gz",
+    preset="comprehensive-splice100",
 )
 
 # Using PrefilterConfig (type-safe)
@@ -812,17 +878,21 @@ except VCFProcessingError as e:
 
 ### Presets
 
-| Preset | Gene Loci | ncRNA | Regulatory | ClinVar Safety Net |
-|--------|-----------|-------|------------|---------------------|
-| **comprehensive** | Full transcript (exon+intron+UTR) | All | ENCODE cCRE + FANTOM5 + Vista | P/LP |
-| **coding-only** | Exon + UTR only | None | None | P/LP |
-| **regulatory-minimal** | Full transcript | All | ENCODE PLS/pELS only | P/LP |
+| Preset | Gene Loci | ncRNA | Regulatory | ClinVar Safety Net | Retention* |
+|--------|-----------|-------|------------|---------------------|------------|
+| **comprehensive** | Full transcript (exon+intron+UTR) | All | ENCODE cCRE + FANTOM5 + Vista | P/LP | ~50-60% |
+| **comprehensive-splice100** | Exon/UTR + 100bp splice window | All | ENCODE cCRE + FANTOM5 + Vista | P/LP | ~25-30% |
+| **coding-only** | Exon + UTR only | None | None | P/LP | ~1-3% |
+| **regulatory-minimal** | Full transcript | All | ENCODE PLS/pELS only | P/LP | ~10-20% |
+| **regulatory-balanced** | Full transcript | All | ENCODE balanced subset | P/LP | ~15-25% |
 
 - **comprehensive**: Maximum sensitivity, best for discovery or sensitivity-first scenarios
+- **comprehensive-splice100**: Removes deep intronic regions while keeping splice junctions; balances sensitivity and compactness
 - **coding-only**: Minimal region set, only protein-coding exons and UTRs, best for focused clinical pipelines
 - **regulatory-minimal**: Balances gene coverage with key regulatory elements, skips distal enhancers
+- **regulatory-balanced**: More balanced regulatory element coverage strategy
 
-> 📊 A typical whole-genome VCF (~3M variants) retains approximately **~3%** after comprehensive filtering.
+> *Retention rates are estimates based on whole-genome VCF (~5M variants); actual values vary by sample.
 
 ---
 
@@ -1023,5 +1093,5 @@ MIT
 ---
 
 **Maintainer**: [@lzr098](https://github.com/lzr098)  
-**Current Version**: 1.0.0  
-**Last Updated**: 2026-06-03
+**Current Version**: 1.1.0  
+**Last Updated**: 2026-06-10

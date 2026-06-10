@@ -22,7 +22,7 @@ from dgra_prefilter.core import FilterStats, PrefilterConfig
 logger = logging.getLogger(__name__)
 
 _TOOL_NAME = "dgra-prefilter"
-_TOOL_VERSION = "1.0.0"
+_TOOL_VERSION = "1.1.0"
 
 
 class ReportGenerator:

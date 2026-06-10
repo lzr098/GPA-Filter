@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from dgra_prefilter.constants import DEFAULT_REF_DIR, LOG_FORMAT, ErrorCode
+from dgra_prefilter.constants import DEFAULT_REF_DIR, LOG_FORMAT
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -109,7 +109,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version="dgra-prefilter 1.0.0",
+        version="dgra-prefilter 1.1.0",
     )
 
     return parser
@@ -190,19 +190,19 @@ def main() -> None:
 
     except FileNotFoundError as exc:
         logger.error("File not found: %s", exc)
-        sys.exit(ErrorCode.INPUT_FILE_NOT_FOUND)
+        sys.exit(1)
     except GenomeMismatchError as exc:
         logger.error("Genome mismatch: %s", exc)
-        sys.exit(ErrorCode.GENOME_MISMATCH)
+        sys.exit(2)
     except BcftoolsNotFoundError as exc:
         logger.error("Dependency missing: %s", exc)
-        sys.exit(ErrorCode.BCFTOOLS_NOT_FOUND)
+        sys.exit(3)
     except RefDataMissingError as exc:
         logger.error("Reference data missing: %s", exc)
-        sys.exit(ErrorCode.REF_FILE_MISSING)
+        sys.exit(4)
     except VCFProcessingError as exc:
         logger.error("VCF processing error: %s", exc)
-        sys.exit(ErrorCode.BCFTOOLS_EXECUTION_ERROR)
+        sys.exit(5)
     except Exception as exc:
         logger.error("Unexpected error: %s", exc, exc_info=True)
         sys.exit(99)
