@@ -194,6 +194,10 @@ class FilterEngine:
             logger.info("Stage 1/6: Input validation")
             self._validate_input()
 
+            # v0.1.0: Check local GRCh38 FASTA availability
+            from dgra_prefilter.fasta_qc import log_fasta_status
+            log_fasta_status()
+
             # Check if input is already prefiltered/annotated
             already_annotated = self._has_dgra_annotations()
             if already_annotated and self.config.annotate:

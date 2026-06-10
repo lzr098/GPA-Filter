@@ -17,3 +17,6 @@ build/
 tmp/
 tmp_downloads/
 refs/.cache/
+
+# Large reference data files (>1MB) — generate locally from ClinVar VCF if needed
+# refs/clinvar_pathogenic_GRCh38.bed

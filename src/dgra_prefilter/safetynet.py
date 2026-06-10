@@ -121,8 +121,16 @@ class ClinVarSafetyNet(SafetyNetProvider):
             return False
 
 
+# v2.0 implementation — activated 2026-06-07 with local OMIM SQLite
 class OMIMSafetyNet(SafetyNetProvider):
-    """OMIM pathogenic variants safety net."""
+    """OMIM Mendelian disease gene safety net (v2.0).
+
+    Protects all known Mendelian disease genes from being filtered out.
+    BED file contains gene coordinates for all OMIM entries with disease
+    associations (prefix: #, %, or + with phenotypeMap entries).
+
+    Generated via: bcftools query to extract gene coordinates from OMIM SQLite.
+    """
 
     BED_FILENAME = "omim_pathogenic_GRCh38.bed"
 
@@ -143,6 +151,7 @@ class OMIMSafetyNet(SafetyNetProvider):
         Returns:
             True if omim_pathogenic_GRCh38.bed exists and is non-empty.
         """
+
         path = self.get_bed_path(ref_dir)
         if not path.exists():
             return False
