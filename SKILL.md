@@ -1,7 +1,7 @@
 ---
 name: dgra-prefilter
 description: |
-  全基因组 VCF 基因组区域预过滤模块（GPA Filter）v1.0.0。基于 GENCODE 基因座、ncRNA 区域、ENCODE 调控元件和 ClinVar 致病变异安全网，对 GRCh38 VCF 进行硬过滤。零外部 Python 运行时依赖，核心过滤委托 bcftools。三种预设（comprehensive/coding-only/regulatory-minimal），支持 CLI 和 Python API。
+  全基因组 VCF 基因组区域预过滤模块（GPA Filter）v1.1.0。基于 GENCODE 基因座、ncRNA 区域、ENCODE 调控元件和 ClinVar 致病变异安全网，对 GRCh38 VCF 进行硬过滤。零外部 Python 运行时依赖，核心过滤委托 bcftools。五种预设（comprehensive / comprehensive-splice100 / coding-only / regulatory-minimal / regulatory-balanced），支持 CLI 和 Python API。
 
   **当以下情况时使用此 Skill**：
   (1) 用户提到"VCF 预过滤"、"基因组区域过滤"、"变异筛选"
@@ -34,7 +34,7 @@ description: |
 |------|------|------|--------|------|
 | input | string | 是 | — | 输入 VCF/VCF.gz/BCF 文件路径 |
 | output | string | 否 | 自动生成 | 输出文件路径（.vcf.gz 自动压缩） |
-| preset | string | 否 | comprehensive | 预设配置：comprehensive / coding-only / regulatory-minimal / regulatory-balanced |
+| preset | string | 否 | comprehensive | 预设配置：comprehensive / comprehensive-splice100 / coding-only / regulatory-minimal / regulatory-balanced |
 | genome | string | 否 | GRCh38 | 基因组版本（仅支持 GRCh38） |
 | ref_dir | string | 否 | ~/.dgra-prefilter/refs | 参考 BED 文件目录 |
 | report | string | 否 | 与 output 同目录 | JSON 报告输出路径 |
@@ -43,12 +43,15 @@ description: |
 | annotate | boolean | 否 | false | 启用 DGRA_REGION/DGRA_SAFETYNET INFO 标注（较慢） |
 | regulatory_source | string | 否 | fantom5 | 调控数据来源：fantom5 / ensembl / both |
 | keep_all_chrM | boolean | 否 | false | 保留所有 chrM 变异 |
+| interactive | boolean | 否 | true | 交互式选择 preset（默认开启，每次运行前提示选择） |
+| no_interactive | boolean | 否 | false | 关闭交互式选择，直接使用 --preset 指定的值 |
 
 ### Preset 说明
 
 | Preset | 基因区 | ncRNA | 调控元件 | 安全网 |
 |--------|--------|-------|----------|--------|
 | comprehensive | 全转录本 | 全部 | ENCODE + FANTOM5 + Vista | ClinVar + OMIM |
+| comprehensive-splice100 | Exon/UTR + 100bp 剪接区 | 全部 | ENCODE + FANTOM5 + Vista | ClinVar + OMIM |
 | coding-only | 仅外显子+UTR | 无 | 无 | ClinVar + OMIM |
 | regulatory-minimal | 全转录本 | 全部 | 仅 ENCODE PLS/pELS | ClinVar + OMIM |
 | regulatory-balanced | 全转录本 | 全部 | ENCODE PLS/pELS/dELS/CTCF | ClinVar + OMIM |
@@ -106,6 +109,9 @@ Requires: Python >= 3.9, bcftools >= 1.17
 用户：「用平衡调控区域过滤这个 VCF」
 → dgra-prefilter --input /path/to/sample.vcf.gz --preset regulatory-balanced
 
+用户：「去除深度内含子，只保留剪接位点附近」
+→ dgra-prefilter --input /path/to/sample.vcf.gz --preset comprehensive-splice100
+
 用户：「过滤后还要标注每个变异落在哪个区域」
 → dgra-prefilter --input /path/to/sample.vcf.gz --preset comprehensive --annotate
 
@@ -114,6 +120,9 @@ Requires: Python >= 3.9, bcftools >= 1.17
 
 用户：「保留所有 chrM 变异」
 → dgra-prefilter --input /path/to/sample.vcf.gz --preset comprehensive --keep-all-chrM
+
+用户：「非交互式运行，直接使用 comprehensive」
+→ dgra-prefilter --input /path/to/sample.vcf.gz --preset comprehensive --no-interactive
 
 用户：「帮我更新参考数据」
 → dgra-prefilter --update-refs

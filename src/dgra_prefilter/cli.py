@@ -52,8 +52,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-I", "--interactive",
         action="store_true",
+        default=True,
+        help="Interactively prompt for preset selection before filtering (default: on)",
+    )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
         default=False,
-        help="Interactively prompt for preset selection before filtering",
+        help="Skip interactive preset selection and use the --preset value directly",
     )
     parser.add_argument(
         "--ref-dir",
@@ -124,6 +130,7 @@ def _args_to_config(args: argparse.Namespace) -> dict:
     Returns:
         Dictionary of PrefilterConfig constructor arguments.
     """
+    interactive = args.interactive and not args.no_interactive
     return {
         "input_path": args.input,
         "output_path": args.output,
@@ -136,7 +143,7 @@ def _args_to_config(args: argparse.Namespace) -> dict:
         "annotate": args.annotate,
         "regulatory_source": args.regulatory_source,
         "keep_all_chrM": args.keep_all_chrM,
-        "interactive": args.interactive,
+        "interactive": interactive,
     }
 
 

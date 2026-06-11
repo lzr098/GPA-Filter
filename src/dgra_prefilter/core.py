@@ -360,6 +360,12 @@ class FilterEngine:
                         logger.info(
                             "Safety net %s: %d variants", provider.get_tag(), sn_count
                         )
+                        # Record safety net counts for report (v1.1.1 fix)
+                        tag = provider.get_tag()
+                        if tag == "ClinVar":
+                            self.stats.clinvar_count = sn_count
+                        elif tag == "OMIM":
+                            self.stats.omim_count = sn_count
                         if sn_count > 0:
                             safetynet_vcfs.append(sn_vcf)
                     else:
@@ -422,8 +428,8 @@ class FilterEngine:
                 )
                 self.stats.region_and_safetynet_variants = 0
                 self.stats.region_counts = {"gene": 0, "ncrna": 0, "regulatory": 0}
-                self.stats.clinvar_count = 0
-                self.stats.omim_count = 0
+                # Preserve safety net counts recorded in Stage 4 (v1.1.1 fix)
+                # clinvar_count and omim_count are already set during safety net extraction
 
             # Populate stats before report generation
             self.stats.elapsed_seconds = time.time() - start_time
@@ -633,10 +639,81 @@ class FilterEngine:
         self._run_bcftools(cmd)
         return output
 
+    def _detect_vcf_chrom_style(self, vcf_path: Path) -> str:
+        """Detect whether VCF uses 'chr' prefix in contig names.
+
+        Returns 'chr' if contigs start with 'chr', 'no_chr' otherwise.
+        """
+        result = subprocess.run(
+            ["bcftools", "view", "-h", str(vcf_path)],
+            capture_output=True, text=True, check=False,
+        )
+        for line in result.stdout.split("\n"):
+            if line.startswith("##contig=<ID="):
+                chrom = line.split("##contig=<ID=")[1].split(",")[0]
+                return "chr" if chrom.startswith("chr") else "no_chr"
+        return "unknown"
+
+    def _normalize_bed_chrom(self, bed_path: Path, target_style: str) -> Path:
+        """Normalize BED chromosome naming to match VCF style.
+
+        If the BED already matches the target style, returns the original path.
+        Otherwise, generates a temporary normalized BED file.
+
+        Args:
+            bed_path: Path to the BED file.
+            target_style: 'chr' or 'no_chr'.
+
+        Returns:
+            Path to the (possibly normalized) BED file.
+        """
+        if target_style == "unknown":
+            return bed_path
+
+        with open(bed_path, "r") as f:
+            first_line = ""
+            for line in f:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#") and not stripped.startswith("track"):
+                    first_line = stripped
+                    break
+
+        if not first_line:
+            return bed_path
+
+        bed_chrom = first_line.split("\t")[0]
+        bed_has_chr = bed_chrom.startswith("chr")
+        vcf_wants_chr = target_style == "chr"
+
+        if bed_has_chr == vcf_wants_chr:
+            return bed_path
+
+        temp_dir = Path(self._temp_dir.name) if self._temp_dir else Path(tempfile.mkdtemp())
+        normalized = temp_dir / f"{bed_path.stem}_normalized.bed"
+        with open(bed_path, "r") as infile, open(normalized, "w") as outfile:
+            for line in infile:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or stripped.startswith("track"):
+                    outfile.write(line)
+                    continue
+                parts = stripped.split("\t")
+                if vcf_wants_chr and not parts[0].startswith("chr"):
+                    parts[0] = f"chr{parts[0]}"
+                elif not vcf_wants_chr and parts[0].startswith("chr"):
+                    parts[0] = parts[0][3:]
+                outfile.write("\t".join(parts) + "\n")
+
+        logger.info("Normalized BED chromosomes: %s -> %s", bed_path.name, normalized.name)
+        return normalized
+
     def _filter_by_safetynet(
         self, input_vcf: Path, safetynet_bed: Path, output: Path
     ) -> Path:
         """Extract variants falling in safety net regions using bcftools.
+
+        Automatically normalizes BED chromosome naming to match the VCF
+        style, preventing missed matches due to 'chr' prefix mismatches
+        (e.g., OMIM BED using '1' while VCF uses 'chr1').
 
         Args:
             input_vcf: Path to input VCF.
@@ -646,9 +723,12 @@ class FilterEngine:
         Returns:
             Path to the filtered VCF.
         """
+        vcf_style = self._detect_vcf_chrom_style(input_vcf)
+        normalized_bed = self._normalize_bed_chrom(safetynet_bed, vcf_style)
+
         cmd = [
             "bcftools", "view",
-            "-T", str(safetynet_bed),
+            "-T", str(normalized_bed),
             "-Oz",
             "-o", str(output),
             str(input_vcf),
