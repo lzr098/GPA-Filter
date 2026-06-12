@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,7 +36,8 @@ BCFTOOLS = os.environ.get(
 )
 DGRA_PREFILTER = os.environ.get(
     "DGRA_PREFILTER",
-    "/Users/zhaorongli/.workbuddy/binaries/python/versions/3.13.12/bin/dgra-prefilter",
+    shutil.which("dgra-prefilter")
+    or "/Users/zhaorongli/.workbuddy/binaries/python/envs/default/bin/dgra-prefilter",
 )
 POSTFILTER = PROJECT_ROOT / "scripts" / "postfilter.py"
 DIAGNOSE = PROJECT_ROOT / "scripts" / "diagnose_vcf.py"

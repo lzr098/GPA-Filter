@@ -14,6 +14,7 @@ import argparse
 import gzip
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,14 +53,22 @@ GENCODE_GTF_URL = (
     "release_44/gencode.v44.annotation.gtf.gz"
 )
 ENCODE_SCREEN_URL = (
-    "https://screen.encodeproject.org/download/tsv/?"
-    "format=gz&assembly=GRCh38&accession=ENCSR000AIZ&fileType=bed"
+    "https://www.encodeproject.org/files/ENCFF420VPZ/"
+    "@@download/ENCFF420VPZ.bed.gz"
 )
-FANTOM5_URL = (
-    "https://fantom.gsc.riken.jp/5/data/hg38/robust/"
-    "hg38_enhancers.bed"
+FANTOM5_ENHANCER_URL = (
+    "https://dbarchive.biosciencedbc.jp/data/fantom5/datafiles/"
+    "reprocessed/hg38_latest/extra/enhancer/F5.hg38.enhancers.bed.gz"
 )
-VISTA_URL = "https://enhancer.lbl.gov/cgi-bin/imagedb3.pl?form=download"
+FANTOM5_CAGE_URL = (
+    "https://dbarchive.biosciencedbc.jp/data/fantom5/datafiles/"
+    "reprocessed/hg38_latest/extra/CAGE_peaks/"
+    "hg38_fair+new_CAGE_peaks_phase1and2.bed.gz"
+)
+VISTA_URL = (
+    "https://hgdownload.soe.ucsc.edu/gbdb/hg38/vistaEnhancers/"
+    "vistaEnhancers.bb"
+)
 CLINVAR_VCF_URL = (
     "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/"
     "clinvar.vcf.gz"
@@ -424,7 +433,11 @@ def _parse_gtf_attribute(attributes_str: str, key: str) -> str:
 
 
 def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
-    """Build ENCODE cCRE BED files from SCREEN TSV data.
+    """Build ENCODE cCRE BED files from SCREEN TSV/BED data.
+
+    Supports two input formats:
+    - Legacy SCREEN TSV: type in 6th column (0-based index 5)
+    - ENCODE portal BED (ENCFF420VPZ): type in 10th column (0-based index 9)
 
     Generates three files:
     - encode_screen_v3_ccres.bed: All cCRE types (3 columns)
@@ -432,7 +445,7 @@ def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
     - encode_screen_v3_balanced.bed: PLS + pELS + dELS + CTCF (4 columns)
 
     Args:
-        tsv_path: Path to ENCODE SCREEN TSV/TSV.GZ file.
+        tsv_path: Path to ENCODE SCREEN TSV/BED file (may be gzipped).
         output_dir: Directory to write output BED files.
     """
     logger.info("Building ENCODE BEDs from %s", tsv_path)
@@ -441,21 +454,36 @@ def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
     pls_pels_intervals: dict[str, list[tuple[int, int]]] = {}
     balanced_intervals: dict[str, list[tuple[int, int, str]]] = {}
 
+    # Auto-detect type column by peeking at the first data line
+    type_col = 5  # default legacy SCREEN TSV
     opener = gzip.open if str(tsv_path).endswith(".gz") else open
     with opener(tsv_path, "rt") as f:
         header_skipped = False
         for line in f:
-            if line.startswith("#"):
+            if line.startswith("#") or line.startswith("track"):
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if not parts:
                 continue
             if not header_skipped:
                 # Heuristic: skip header only if it doesn't look like a chrom line
-                if not line.startswith("chr"):
+                if not parts[0].startswith("chr"):
                     header_skipped = True
                     continue
                 header_skipped = True
+                # Detect format: ENCODE portal BED has cCRE type in column 10
+                if len(parts) >= 10 and parts[9] in {
+                    "PLS", "pELS", "dELS", "CTCF", "CTCF-only",
+                    "CA-CTCF", "CA", "CA-H3K4me3", "CA-TF", "TF",
+                }:
+                    type_col = 9
+                    logger.info("Detected ENCODE portal BED format (type column 10)")
+                elif len(parts) >= 6 and parts[5].split(",")[0].strip() in {
+                    "PLS", "pELS", "dELS", "CTCF",
+                }:
+                    logger.info("Detected legacy SCREEN TSV format (type column 6)")
 
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 6:
+            if len(parts) < 3:
                 continue
 
             chrom_raw = parts[0]
@@ -465,9 +493,11 @@ def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
             except ValueError:
                 continue
 
-            # cCRE type is in the 6th column, format "type,CTCF-state" or just "type"
-            type_field = parts[5] if len(parts) > 5 else ""
+            # cCRE type
+            type_field = parts[type_col] if len(parts) > type_col else ""
             ccre_type = type_field.split(",")[0].strip()
+            # Normalize CTCF-only -> CTCF for balanced preset
+            ccre_type_balanced = "CTCF" if ccre_type in ("CTCF", "CTCF-only", "CA-CTCF") else ccre_type
 
             chrom = BedUtils.normalize_chrom(chrom_raw)
 
@@ -483,10 +513,10 @@ def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
                 pls_pels_intervals[chrom].append((start, end))
 
             # Balanced preset: PLS + pELS + dELS + CTCF with type in 4th column
-            if ccre_type in ("PLS", "pELS", "dELS", "CTCF"):
+            if ccre_type in ("PLS", "pELS", "dELS") or ccre_type_balanced == "CTCF":
                 if chrom not in balanced_intervals:
                     balanced_intervals[chrom] = []
-                balanced_intervals[chrom].append((start, end, ccre_type))
+                balanced_intervals[chrom].append((start, end, ccre_type_balanced))
 
     # Sort and merge
     for chrom in ccre_intervals:
@@ -522,43 +552,55 @@ def build_encode_beds(tsv_path: Path, output_dir: Path) -> None:
     )
 
 
-def build_fantom5_bed(tsv_path: Path, output_dir: Path) -> None:
+def build_fantom5_bed(
+    enhancer_path: Path,
+    cage_path: Path,
+    output_dir: Path,
+) -> None:
     """Build FANTOM5 enhancers/promoters BED file.
 
+    Merges FANTOM5 enhancers and CAGE peak (promoter/TSS) intervals into a
+    single BED for the regulatory-balanced and comprehensive presets.
+
     Args:
-        tsv_path: Path to FANTOM5 data file (BED or TSV).
+        enhancer_path: Path to FANTOM5 enhancer BED/BED.GZ file.
+        cage_path: Path to FANTOM5 CAGE peak BED/BED.GZ file.
         output_dir: Directory to write output BED file.
     """
-    logger.info("Building FANTOM5 BED from %s", tsv_path)
+    logger.info("Building FANTOM5 BED from %s and %s", enhancer_path, cage_path)
 
     intervals: dict[str, list[tuple[int, int]]] = {}
-    opener = gzip.open if str(tsv_path).endswith(".gz") else open
-    with opener(tsv_path, "rt") as f:
-        for line in f:
-            if line.startswith("#") or line.startswith("track"):
-                continue
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 3:
-                parts = line.rstrip("\n").split()
-            if len(parts) < 3:
-                continue
-            chrom = BedUtils.normalize_chrom(parts[0])
-            try:
-                start = int(parts[1])
-                end = int(parts[2])
-            except ValueError:
-                continue
 
-            if chrom not in intervals:
-                intervals[chrom] = []
-            intervals[chrom].append((start, end))
+    for src_path in (enhancer_path, cage_path):
+        if not src_path or not src_path.exists():
+            continue
+        opener = gzip.open if str(src_path).endswith(".gz") else open
+        with opener(src_path, "rt") as f:
+            for line in f:
+                if line.startswith("#") or line.startswith("track"):
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 3:
+                    parts = line.rstrip("\n").split()
+                if len(parts) < 3:
+                    continue
+                chrom = BedUtils.normalize_chrom(parts[0])
+                try:
+                    start = int(parts[1])
+                    end = int(parts[2])
+                except ValueError:
+                    continue
+
+                if chrom not in intervals:
+                    intervals[chrom] = []
+                intervals[chrom].append((start, end))
 
     for chrom in intervals:
         intervals[chrom].sort(key=lambda x: x[0])
         intervals[chrom] = BedUtils.merge_intervals(intervals[chrom])
 
     BedUtils.write_bed(intervals, output_dir / FANTOM5_BED)
-    write_version_file(output_dir, FANTOM5_BED, "FANTOM5")
+    write_version_file(output_dir, FANTOM5_BED, "FANTOM5 hg38 enhancers + CAGE peaks")
 
     logger.info(
         "FANTOM5 BED built: %d intervals",
@@ -1026,36 +1068,75 @@ def main() -> None:
                 bed_path.touch()
                 write_version_file(output_dir, bed_name, "missing")
 
-    # Build FANTOM5 BED
+    # Build FANTOM5 BED (enhancers + CAGE peaks/promoters)
     if args.fantom5_file:
-        fantom5_path = args.fantom5_file
+        fantom5_enhancer_path = args.fantom5_file
     elif not args.skip_download:
-        fantom5_path = tmp_path / "fantom5_enhancers.bed"
+        fantom5_enhancer_path = tmp_path / "fantom5_enhancers.bed.gz"
         try:
-            _download_file(FANTOM5_URL, fantom5_path)
+            _download_file(FANTOM5_ENHANCER_URL, fantom5_enhancer_path)
         except RuntimeError:
-            logger.warning("FANTOM5 download failed")
-            fantom5_path = None
+            logger.warning("FANTOM5 enhancer download failed")
+            fantom5_enhancer_path = None
     else:
-        fantom5_path = None
+        fantom5_enhancer_path = None
 
-    if fantom5_path and fantom5_path.exists():
-        build_fantom5_bed(fantom5_path, output_dir)
+    if args.skip_download:
+        fantom5_cage_path = tmp_path / "fantom5_cage_peaks.bed.gz"
+        if not fantom5_cage_path.exists():
+            fantom5_cage_path = None
+    elif fantom5_enhancer_path:
+        fantom5_cage_path = tmp_path / "fantom5_cage_peaks.bed.gz"
+        try:
+            _download_file(FANTOM5_CAGE_URL, fantom5_cage_path)
+        except RuntimeError:
+            logger.warning("FANTOM5 CAGE peak download failed")
+            fantom5_cage_path = None
+    else:
+        fantom5_cage_path = None
+
+    if fantom5_enhancer_path and fantom5_enhancer_path.exists():
+        build_fantom5_bed(fantom5_enhancer_path, fantom5_cage_path, output_dir)
     else:
         logger.warning("FANTOM5 not available, creating empty BED file")
         (output_dir / FANTOM5_BED).touch()
         write_version_file(output_dir, FANTOM5_BED, "missing")
 
-    # Build Vista BED
+    # Build Vista BED (download bigBed and convert with bigBedToBed if available)
     if args.vista_file:
         vista_path = args.vista_file
     elif not args.skip_download:
-        vista_path = tmp_path / "vista_enhancers.tsv"
+        vista_bb_path = tmp_path / "vista_enhancers.bb"
         try:
-            _download_file(VISTA_URL, vista_path)
+            _download_file(VISTA_URL, vista_bb_path)
         except RuntimeError:
-            logger.warning("Vista download failed")
-            vista_path = None
+            logger.warning("Vista bigBed download failed")
+            vista_bb_path = None
+        vista_path = tmp_path / "vista_enhancers.bed"
+        if vista_bb_path and vista_bb_path.exists():
+            bigbedtobed = shutil.which("bigBedToBed")
+            if not bigbedtobed:
+                # Try common UCSC binary install paths
+                for candidate in [
+                    Path.home() / "bin" / "bigBedToBed",
+                    Path("/usr/local/bin/bigBedToBed"),
+                ]:
+                    if candidate.exists():
+                        bigbedtobed = str(candidate)
+                        break
+            if bigbedtobed:
+                try:
+                    subprocess.run(
+                        [bigbedtobed, str(vista_bb_path), str(vista_path)],
+                        check=True,
+                        capture_output=True,
+                    )
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    logger.warning("bigBedToBed conversion failed")
+                    vista_path = None
+            else:
+                logger.warning("bigBedToBed not found; cannot convert Vista bigBed")
+                vista_path = None
     else:
         vista_path = None
 
