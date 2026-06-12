@@ -43,18 +43,21 @@ description: |
 | annotate | boolean | 否 | false | 启用 DGRA_REGION/DGRA_SAFETYNET INFO 标注（较慢） |
 | regulatory_source | string | 否 | fantom5 | 调控数据来源：fantom5 / ensembl / both |
 | keep_all_chrM | boolean | 否 | false | 保留所有 chrM 变异 |
+| omim_safetynet | boolean | 否 | false | 启用 OMIM 基因座安全网（默认关闭，避免保留过多内含子变异） |
 | interactive | boolean | 否 | true | 交互式选择 preset（默认开启，每次运行前提示选择） |
 | no_interactive | boolean | 否 | false | 关闭交互式选择，直接使用 --preset 指定的值 |
 
 ### Preset 说明
 
-| Preset | 基因区 | ncRNA | 调控元件 | 安全网 |
-|--------|--------|-------|----------|--------|
-| comprehensive | 全转录本 | 全部 | ENCODE + FANTOM5 + Vista | ClinVar + OMIM |
-| comprehensive-splice100 | Exon/UTR + 100bp 剪接区 | 全部 | ENCODE + FANTOM5 + Vista | ClinVar + OMIM |
-| coding-only | 仅外显子+UTR | 无 | 无 | ClinVar + OMIM |
-| regulatory-minimal | 全转录本 | 全部 | 仅 ENCODE PLS/pELS | ClinVar + OMIM |
-| regulatory-balanced | 全转录本 | 全部 | ENCODE PLS/pELS/dELS/CTCF | ClinVar + OMIM |
+| Preset | 基因区 | ncRNA | 调控元件 | 安全网（默认） |
+|--------|--------|-------|----------|----------------|
+| comprehensive | 全转录本 | 全部 | ENCODE + FANTOM5 + Vista | ClinVar |
+| comprehensive-splice100 | Exon/UTR + 100bp 剪接区 | 全部 | ENCODE + FANTOM5 + Vista | ClinVar |
+| coding-only | 仅外显子+UTR | 无 | 无 | ClinVar |
+| regulatory-minimal | 全转录本 | 全部 | 仅 ENCODE PLS/pELS | ClinVar |
+| regulatory-balanced | 全转录本 | 全部 | ENCODE PLS/pELS/dELS/CTCF | ClinVar |
+
+> 注：OMIM 安全网自 v1.1.1 起默认关闭。如需启用，加 `--omim-safetynet`。
 
 ## Output
 

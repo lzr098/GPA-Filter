@@ -124,6 +124,7 @@ class PrefilterConfig:
     annotate: bool = False
     regulatory_source: str = "fantom5"
     keep_all_chrM: bool = False
+    omim_safetynet: bool = False
 
     def __post_init__(self) -> None:
         """Normalize paths after initialization."""
@@ -269,6 +270,8 @@ class FilterEngine:
             preset_kwargs["regulatory_source"] = config.regulatory_source
         if config.keep_all_chrM:
             preset_kwargs["keep_all_chrM"] = True
+        if config.omim_safetynet:
+            preset_kwargs["safetynet_omim"] = True
         self.preset = replace(base_preset, **preset_kwargs) if preset_kwargs else base_preset
         self.ref_manager = RefManager(config.ref_dir)
         self.stats = FilterStats()
@@ -848,6 +851,7 @@ def prefilter_vcf(
     annotate: bool = False,
     regulatory_source: str = "fantom5",
     keep_all_chrM: bool = False,
+    omim_safetynet: bool = False,
     interactive: bool = False,
 ) -> FilterResult:
     """Whole-genome VCF region prefiltering main entry point.
@@ -895,6 +899,7 @@ def prefilter_vcf(
         annotate=annotate,
         regulatory_source=regulatory_source,
         keep_all_chrM=keep_all_chrM,
+        omim_safetynet=omim_safetynet,
     )
 
     # Handle reference data update if requested

@@ -107,6 +107,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Retain all chrM variants regardless of region (default: false)",
     )
     parser.add_argument(
+        "--omim-safetynet",
+        action="store_true",
+        default=False,
+        help="Enable OMIM gene-locus safety net (default: off since v1.1.1)",
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         default=False,
@@ -143,6 +149,7 @@ def _args_to_config(args: argparse.Namespace) -> dict:
         "annotate": args.annotate,
         "regulatory_source": args.regulatory_source,
         "keep_all_chrM": args.keep_all_chrM,
+        "omim_safetynet": args.omim_safetynet,
         "interactive": interactive,
     }
 

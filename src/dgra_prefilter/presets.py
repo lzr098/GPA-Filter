@@ -105,7 +105,7 @@ PRESETS: dict[str, PresetConfig] = {
         regulatory_fantom5=True,
         regulatory_vista=True,
         safetynet_clinvar=True,
-        safetynet_omim=True,
+        safetynet_omim=False,
     ),
     "coding-only": PresetConfig(
         name="coding-only",
@@ -117,7 +117,7 @@ PRESETS: dict[str, PresetConfig] = {
         regulatory_fantom5=False,
         regulatory_vista=False,
         safetynet_clinvar=True,
-        safetynet_omim=True,
+        safetynet_omim=False,
     ),
     "regulatory-minimal": PresetConfig(
         name="regulatory-minimal",
@@ -129,7 +129,7 @@ PRESETS: dict[str, PresetConfig] = {
         regulatory_fantom5=False,
         regulatory_vista=False,
         safetynet_clinvar=True,
-        safetynet_omim=True,
+        safetynet_omim=False,
     ),
     "regulatory-balanced": PresetConfig(
         name="regulatory-balanced",
@@ -141,7 +141,7 @@ PRESETS: dict[str, PresetConfig] = {
         regulatory_fantom5=False,
         regulatory_vista=False,
         safetynet_clinvar=True,
-        safetynet_omim=True,
+        safetynet_omim=False,
     ),
     "comprehensive-splice100": PresetConfig(
         name="comprehensive-splice100",
@@ -153,7 +153,7 @@ PRESETS: dict[str, PresetConfig] = {
         regulatory_fantom5=True,
         regulatory_vista=True,
         safetynet_clinvar=True,
-        safetynet_omim=True,
+        safetynet_omim=False,
         splice_window=100,
     ),
 }
