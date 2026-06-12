@@ -74,30 +74,30 @@ class TestPresetConfig:
     def test_get_safetynet_providers_comprehensive(self) -> None:
         p = PRESETS["comprehensive"]
         providers = p.get_safetynet_providers()
-        assert len(providers) == 2
+        assert len(providers) == 1
         assert any(isinstance(p, ClinVarSafetyNet) for p in providers)
-        assert any(isinstance(p, OMIMSafetyNet) for p in providers)
+        assert not any(isinstance(p, OMIMSafetyNet) for p in providers)
 
     def test_get_safetynet_providers_coding_only(self) -> None:
         p = PRESETS["coding-only"]
         providers = p.get_safetynet_providers()
-        assert len(providers) == 2
+        assert len(providers) == 1
         assert any(isinstance(p, ClinVarSafetyNet) for p in providers)
-        assert any(isinstance(p, OMIMSafetyNet) for p in providers)
+        assert not any(isinstance(p, OMIMSafetyNet) for p in providers)
 
     def test_get_safetynet_providers_regulatory_minimal(self) -> None:
         p = PRESETS["regulatory-minimal"]
         providers = p.get_safetynet_providers()
-        assert len(providers) == 2
+        assert len(providers) == 1
         assert any(isinstance(p, ClinVarSafetyNet) for p in providers)
-        assert any(isinstance(p, OMIMSafetyNet) for p in providers)
+        assert not any(isinstance(p, OMIMSafetyNet) for p in providers)
 
     def test_get_safetynet_providers_regulatory_balanced(self) -> None:
         p = PRESETS["regulatory-balanced"]
         providers = p.get_safetynet_providers()
-        assert len(providers) == 2
+        assert len(providers) == 1
         assert any(isinstance(p, ClinVarSafetyNet) for p in providers)
-        assert any(isinstance(p, OMIMSafetyNet) for p in providers)
+        assert not any(isinstance(p, OMIMSafetyNet) for p in providers)
 
 
 # ======================================================================
@@ -145,7 +145,7 @@ class TestPresetFieldCorrectness:
         assert p.regulatory_fantom5 is True
         assert p.regulatory_vista is True
         assert p.safetynet_clinvar is True
-        assert p.safetynet_omim is True
+        assert p.safetynet_omim is False
         assert p.regulatory_source == "fantom5"
         assert p.keep_all_chrM is False
 
@@ -159,7 +159,7 @@ class TestPresetFieldCorrectness:
         assert p.regulatory_fantom5 is False
         assert p.regulatory_vista is False
         assert p.safetynet_clinvar is True
-        assert p.safetynet_omim is True
+        assert p.safetynet_omim is False
         assert p.regulatory_source == "fantom5"
         assert p.keep_all_chrM is False
 
@@ -173,7 +173,7 @@ class TestPresetFieldCorrectness:
         assert p.regulatory_fantom5 is False
         assert p.regulatory_vista is False
         assert p.safetynet_clinvar is True
-        assert p.safetynet_omim is True
+        assert p.safetynet_omim is False
         assert p.regulatory_source == "fantom5"
         assert p.keep_all_chrM is False
 
@@ -187,7 +187,7 @@ class TestPresetFieldCorrectness:
         assert p.regulatory_fantom5 is False
         assert p.regulatory_vista is False
         assert p.safetynet_clinvar is True
-        assert p.safetynet_omim is True
+        assert p.safetynet_omim is False
         assert p.regulatory_source == "fantom5"
         assert p.keep_all_chrM is False
 
