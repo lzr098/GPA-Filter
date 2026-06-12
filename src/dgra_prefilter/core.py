@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import logging
+import re
 import subprocess
 import tempfile
 import time
@@ -573,10 +574,73 @@ class FilterEngine:
         except FileNotFoundError:
             raise BcftoolsNotFoundError()
 
+    # v0.11.0: Known GRCh38 contig lengths for major chromosomes.
+    _GRCH38_KEY_LENGTHS: dict[str, int] = {
+        "1": 248956422,
+        "chr1": 248956422,
+        "2": 242193529,
+        "chr2": 242193529,
+        "3": 198295559,
+        "chr3": 198295559,
+        "4": 190214555,
+        "chr4": 190214555,
+        "5": 181538259,
+        "chr5": 181538259,
+        "6": 170805979,
+        "chr6": 170805979,
+        "7": 159345973,
+        "chr7": 159345973,
+        "X": 156040895,
+        "chrX": 156040895,
+        "8": 145138636,
+        "chr8": 145138636,
+        "9": 138394717,
+        "chr9": 138394717,
+        "11": 135086622,
+        "chr11": 135086622,
+        "10": 133797422,
+        "chr10": 133797422,
+        "12": 133275309,
+        "chr12": 133275309,
+        "13": 114364328,
+        "chr13": 114364328,
+        "14": 107043718,
+        "chr14": 107043718,
+        "15": 101991189,
+        "chr15": 101991189,
+        "16": 90338345,
+        "chr16": 90338345,
+        "17": 83257441,
+        "chr17": 83257441,
+        "18": 80373285,
+        "chr18": 80373285,
+        "20": 64444167,
+        "chr20": 64444167,
+        "19": 58617616,
+        "chr19": 58617616,
+        "Y": 57227415,
+        "chrY": 57227415,
+        "22": 50818468,
+        "chr22": 50818468,
+        "21": 46709983,
+        "chr21": 46709983,
+        "MT": 16569,
+        "chrM": 16569,
+        "chrMT": 16569,
+    }
+
     def _check_genome_version(self) -> None:
         """Check that the VCF header declares the expected genome version.
 
-        Looks for 'assembly=GRCh38' or 'reference=GRCh38' in the VCF header.
+        Priority of evidence (highest first):
+        1. ##reference= / ##assembly= header lines (authoritative).
+        2. ##contig length matching against known GRCh38 lengths.
+        3. Other header lines (degraded, requires whole-word or path match).
+
+        Command-line metadata lines (e.g. ##LUSHCommandLine) that merely
+        mention a build as part of a longer string are ignored, because
+        they often record the source/liftover history rather than the
+        actual coordinate system of this VCF.
 
         Raises:
             GenomeMismatchError: If the genome version does not match.
@@ -587,25 +651,76 @@ class FilterEngine:
         try:
             opener = gzip.open if str(input_path).endswith(".gz") else open
             with opener(input_path, "rt") as f:
+                header_lines = []
                 for line in f:
                     if not line.startswith("#"):
                         break
-                    line_lower = line.lower()
-                    if "grch38" in line_lower or "hg38" in line_lower:
-                        if "assembly=grch38" in line_lower or "assembly=GRCh38" in line:
-                            found_genome = "GRCh38"
-                        elif "reference=grch38" in line_lower or "reference=GRCh38" in line:
-                            found_genome = "GRCh38"
-                        elif "grch38" in line_lower:
-                            found_genome = "GRCh38"
-                        break
-                    if "grch37" in line_lower or "hg19" in line_lower:
-                        found_genome = "GRCh37"
-                        break
+                    header_lines.append(line)
         except Exception:
-            # If we can't read the header, we'll skip the check
             logger.warning("Could not read VCF header for genome version check")
             return
+
+        # Pass 1: authoritative reference/assembly fields.
+        for line in header_lines:
+            line_lower = line.lower()
+            if line_lower.startswith("##reference="):
+                if "grch38" in line_lower or "hg38" in line_lower or "grch37" in line_lower or "hg19" in line_lower:
+                    found_genome = self._detect_build_from_text(line_lower)
+                    if found_genome:
+                        break
+            if line_lower.startswith("##assembly="):
+                found_genome = self._detect_build_from_text(line_lower)
+                if found_genome:
+                    break
+
+        # Pass 2: contig length matching.
+        if found_genome is None:
+            grch38_matches = 0
+            grch37_mismatches = 0
+            contig_pattern = re.compile(r"##contig=<ID=([^,]+),length=(\d+)")
+            for line in header_lines:
+                match = contig_pattern.search(line)
+                if not match:
+                    continue
+                chrom, length_str = match.groups()
+                expected = self._GRCH38_KEY_LENGTHS.get(chrom)
+                if expected is None:
+                    continue
+                length = int(length_str)
+                if length == expected:
+                    grch38_matches += 1
+                elif chrom in ("1", "chr1", "X", "chrX"):
+                    # Major chromosomes with wrong length strongly indicate non-GRCh38.
+                    grch37_mismatches += 1
+            if grch38_matches >= 3 and grch37_mismatches == 0:
+                found_genome = "GRCh38"
+                logger.debug(
+                    "Genome version determined by contig lengths: GRCh38 "
+                    "(%s matching chromosomes)",
+                    grch38_matches,
+                )
+            elif grch37_mismatches > 0:
+                found_genome = "GRCh37"
+                logger.debug(
+                    "Genome version determined by contig length mismatch: GRCh37"
+                )
+
+        # Pass 3: degraded fallback — only whole-word/path-aware matches in
+        # non-command-line header lines. Skip lines that look like command
+        # history or contain long free-text command lines.
+        if found_genome is None:
+            for line in header_lines:
+                line_lower = line.lower()
+                # Skip command-line / software metadata that is not authoritative.
+                if line_lower.startswith(("##source=", "##software=", "##commandline=", "##lushcommandline=", "##gatkcommandline=")):
+                    continue
+                # Whole-word build mentions in structured fields are OK.
+                found_genome = self._detect_build_from_text(line_lower)
+                if found_genome:
+                    logger.debug(
+                        "Genome version determined by fallback header line: %s", found_genome
+                    )
+                    break
 
         if found_genome is not None and found_genome != self.config.genome:
             raise GenomeMismatchError(self.config.genome, found_genome)
@@ -615,6 +730,22 @@ class FilterEngine:
                 "Could not determine genome version from VCF header. "
                 "Proceeding without genome check."
             )
+
+    @staticmethod
+    def _detect_build_from_text(text: str) -> str | None:
+        """Return 'GRCh38' or 'GRCh37' if the text unambiguously names one build.
+
+        Prefers explicit 'grch38'/'hg38' or 'grch37'/'hg19' tokens over
+        partial matches. Returns None if both builds are mentioned or
+        the signal is ambiguous.
+        """
+        has_38 = "grch38" in text or "hg38" in text
+        has_37 = "grch37" in text or "hg19" in text
+        if has_38 and not has_37:
+            return "GRCh38"
+        if has_37 and not has_38:
+            return "GRCh37"
+        return None
 
     def _filter_by_regions(
         self, input_vcf: Path, merged_bed: Path, output: Path
