@@ -47,6 +47,10 @@ from dgra_prefilter.constants import (
 
 logger = logging.getLogger(__name__)
 
+# Shared local data assets (preferred over download)
+SHARED_DATA_DIR = Path.home() / ".workbuddy" / "data"
+SHARED_GENCODE_GTF = SHARED_DATA_DIR / "gencode" / "gencode.v44.annotation.gtf.gz"
+
 # Data source URLs
 GENCODE_GTF_URL = (
     "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/"
@@ -1007,9 +1011,12 @@ def main() -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     tmp_path = cache_dir
 
-    # Build GENCODE BEDs
+    # Build GENCODE BEDs: prefer shared asset, then CLI arg, then download
     if args.gencode_gtf:
         gencode_path = args.gencode_gtf
+    elif SHARED_GENCODE_GTF.exists():
+        logger.info("Using shared GENCODE GTF: %s", SHARED_GENCODE_GTF)
+        gencode_path = SHARED_GENCODE_GTF
     elif not args.skip_download:
         gencode_path = tmp_path / "gencode.v44.annotation.gtf.gz"
         _download_file(GENCODE_GTF_URL, gencode_path)
