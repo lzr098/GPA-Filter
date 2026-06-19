@@ -3,6 +3,12 @@
 </h1>
 
 <p align="center">
+  <a href="https://github.com/lzr098/GPA-Filter"><img src="https://img.shields.io/badge/version-1.1.0-blue" alt="version"></a>
+  <a href="#"><img src="https://img.shields.io/badge/requires-bcftools-orange" alt="bcftools"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license"></a>
+</p>
+
+<p align="center">
   <strong>Genomic region prefilter for whole-genome VCF files</strong><br>
   GENCODE · ENCODE · ClinVar · Zero runtime Python dependencies
 </p>
@@ -1089,6 +1095,16 @@ dgra-prefilter/
 ## License
 
 MIT
+
+---
+
+## Related Skills · 相关技能
+
+| Skill · 技能 | Repo · 仓库 | Purpose · 用途 |
+|---|---|---|
+| **GPA** | [lzr098/dgra-genomic-risk](https://github.com/lzr098/dgra-genomic-risk) | Whole-genome phenotype association |
+| **variant-impact** | [lzr098/variant-impact](https://github.com/lzr098/variant-impact) | Single variant ACMG classification |
+| **disease-risk-query** | [lzr098/Disease-Risk-Query](https://github.com/lzr098/Disease-Risk-Query) | Disease-specific genetic risk |
 
 ---
 
